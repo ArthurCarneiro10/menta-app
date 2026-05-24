@@ -117,14 +117,14 @@ export default function UploadPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
+      <main className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
         <p className="text-white/60">Carregando...</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
+    <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
       <div className="max-w-2xl mx-auto">
         <header className="flex items-center justify-between mb-12 pt-8">
           <h1 className="text-2xl font-bold text-white">

@@ -59,7 +59,7 @@ export default function DashboardPage() {
  
   if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
+      <main className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
         <p className="text-white/60">Carregando...</p>
       </main>
     );
@@ -70,7 +70,7 @@ export default function DashboardPage() {
     : 0;
  
   return (
-    <main className="min-h-screen bg-gradient-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-16">
+    <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-16">
       <div className="max-w-2xl mx-auto px-5">
  
         <header className="flex items-center justify-between pt-10 pb-6">
@@ -148,7 +148,7 @@ export default function DashboardPage() {
             {fatura.insight && (
               <div className="mt-4 rounded-3xl p-5 bg-white" style={{ border: '1px solid rgba(122,217,183,0.4)' }}>
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full grid place-items-center flex-shrink-0 bg-[#7ad9b7]/25 text-sm font-bold text-[#3d7d66]">
+                  <div className="w-10 h-10 rounded-full grid place-items-center shrink-0 bg-[#7ad9b7]/25 text-sm font-bold text-[#3d7d66]">
                     IA
                   </div>
                   <div className="flex-1">
