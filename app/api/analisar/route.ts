@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     const arrayBuffer = await arquivo.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-   const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default;
+    const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default;
     const dados = await pdfParse(buffer);
     const textoFatura = dados.text;
 
@@ -60,11 +60,17 @@ Responda APENAS com um JSON valido, sem nenhum texto antes ou depois, neste form
   "categorias": [
     { "nome": "Alimentacao", "valor": 743.00 }
   ],
+  "transacoes": [
+    { "descricao": "iFood", "valor": 38.90, "categoria": "Alimentacao" },
+    { "descricao": "Uber", "valor": 22.40, "categoria": "Transporte" }
+  ],
   "insight": "uma frase curta e util sobre os gastos, em portugues"
 }
 
 Categorias possiveis: Alimentacao, Transporte, Compras, Lazer, Saude, Educacao, Moradia, Servicos, Outros.
-Agrupe os gastos nessas categorias. Os valores devem somar aproximadamente o total.
+
+Em "transacoes", liste CADA compra/gasto individual que voce identificar na fatura, com a descricao (nome do estabelecimento), o valor e a categoria dela. Liste todas as transacoes que conseguir identificar.
+Em "categorias", agrupe os gastos somando por categoria. Os valores devem somar aproximadamente o total.
 
 Texto da fatura:
 ${textoFatura.slice(0, 8000)}`;
@@ -120,6 +126,7 @@ ${textoFatura.slice(0, 8000)}`;
         .update({
           total: analise.total,
           categorias: analise.categorias,
+          transacoes: analise.transacoes,
           insight: analise.insight,
           status: 'analisada',
           analisado_em: new Date().toISOString(),
