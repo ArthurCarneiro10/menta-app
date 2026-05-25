@@ -1,0 +1,208 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
+import { Sparkles, Send } from 'lucide-react';
+
+// Paleta oficial Menta
+const COLORS = {
+  primary: '#7ad9b7',
+  primaryLight: '#7cdbb9',
+  primaryMid: '#3d7d66',
+  dark1: '#183e31',
+  ink: '#010302',
+  muted: '#86958f',
+};
+
+type Mensagem = { role: 'ai' | 'user'; text: string };
+type Categoria = { nome: string; valor: number };
+type Transacao = { descricao: string; valor: number; categoria: string };
+
+export default function IAChatPage() {
+  const router = useRouter();
+  const [mensagens, setMensagens] = useState<Mensagem[]>([
+    { role: 'ai', text: 'Oi! 👋 Sou sua IA financeira. Me pergunta qualquer coisa sobre seus gastos.' },
+  ]);
+  const [input, setInput] = useState('');
+  const [pensando, setPensando] = useState(false);
+  const [dadosTexto, setDadosTexto] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Sugestoes prontas pra clicar
+  const sugestoes = [
+    'Onde eu mais gastei esse mes?',
+    'Quanto gastei com alimentacao?',
+    'Me da uma dica pra economizar',
+  ];
+
+  // Carrega os dados da ultima fatura analisada (pra mandar pra IA)
+  useEffect(() => {
+    async function carregar() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+
+      const { data } = await supabase
+        .from('faturas')
+        .select('*')
+        .eq('status', 'analisada')
+        .order('analisado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (data) {
+        const categorias: Categoria[] = data.categorias ?? [];
+        const transacoes: Transacao[] = data.transacoes ?? [];
+        // monta um texto resumido pra mandar pra IA
+        let texto = `Total da fatura: R$ ${data.total}\n`;
+        texto += `Insight: ${data.insight ?? 'sem insight'}\n`;
+        texto += `Gastos por categoria:\n`;
+        categorias.forEach((c) => {
+          texto += `- ${c.nome}: R$ ${c.valor}\n`;
+        });
+        if (transacoes.length > 0) {
+          texto += `Compras individuais:\n`;
+          transacoes.forEach((t) => {
+            texto += `- ${t.descricao} (${t.categoria}): R$ ${t.valor}\n`;
+          });
+        }
+        setDadosTexto(texto);
+      } else {
+        setDadosTexto('O usuario ainda nao analisou nenhuma fatura.');
+      }
+    }
+    carregar();
+  }, [router]);
+
+  // rola pro final quando chega mensagem nova
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [mensagens, pensando]);
+
+  async function enviar(texto: string) {
+    if (!texto.trim() || pensando) return;
+
+    // adiciona a mensagem do usuario na tela
+    setMensagens((m) => [...m, { role: 'user', text: texto }]);
+    setInput('');
+    setPensando(true);
+
+    try {
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pergunta: texto, dados: dadosTexto }),
+      });
+      const json = await resp.json();
+      const resposta = json.resposta || json.erro || 'Nao consegui responder agora.';
+      setMensagens((m) => [...m, { role: 'ai', text: resposta }]);
+    } catch {
+      setMensagens((m) => [...m, { role: 'ai', text: 'Ops, deu um erro ao falar com a IA. Tenta de novo.' }]);
+    } finally {
+      setPensando(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      {/* Header */}
+      <div style={{ background: COLORS.dark1, padding: '48px 24px 20px', borderRadius: '0 0 28px 28px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ width: '40px', height: '40px', borderRadius: '999px', display: 'grid', placeItems: 'center', background: COLORS.primary }}>
+            <Sparkles size={20} color={COLORS.ink} />
+          </div>
+          <div>
+            <h1 style={{ color: 'white', fontSize: '18px', fontWeight: 700, margin: 0 }}>Menta IA</h1>
+            <p style={{ color: COLORS.primaryLight, fontSize: '11px', margin: 0 }}>
+              online · sabe tudo dos seus gastos
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Mensagens */}
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {mensagens.map((m, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+              <div
+                style={{
+                  maxWidth: '80%',
+                  borderRadius: '16px',
+                  padding: '10px 14px',
+                  fontSize: '14px',
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap',
+                  background: m.role === 'user' ? COLORS.primary : 'white',
+                  color: COLORS.ink,
+                  border: m.role === 'user' ? 'none' : '1px solid #eef2ef',
+                  borderBottomRightRadius: m.role === 'user' ? '4px' : '16px',
+                  borderBottomLeftRadius: m.role === 'ai' ? '4px' : '16px',
+                }}
+              >
+                {m.text}
+              </div>
+            </div>
+          ))}
+
+          {/* indicador "pensando" */}
+          {pensando && (
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <div style={{ borderRadius: '16px', padding: '10px 14px', fontSize: '14px', background: 'white', color: COLORS.muted, border: '1px solid #eef2ef' }}>
+                Pensando...
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Sugestoes */}
+      <div style={{ padding: '0 16px 8px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
+          {sugestoes.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => enviar(s)}
+              style={{
+                fontSize: '11px',
+                padding: '6px 12px',
+                borderRadius: '999px',
+                whiteSpace: 'nowrap',
+                fontWeight: 500,
+                flexShrink: 0,
+                cursor: 'pointer',
+                background: 'white',
+                color: COLORS.primaryMid,
+                border: `1px solid ${COLORS.primary}50`,
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Input */}
+      <div style={{ padding: '0 16px 100px', flexShrink: 0 }}>
+        <div style={{ borderRadius: '999px', padding: '6px', display: 'flex', alignItems: 'center', gap: '8px', background: 'white', border: '1px solid #eef2ef' }}>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && enviar(input)}
+            placeholder="Pergunta qualquer coisa..."
+            style={{ flex: 1, background: 'transparent', padding: '8px 12px', fontSize: '14px', outline: 'none', border: 'none', color: COLORS.ink }}
+          />
+          <button
+            onClick={() => enviar(input)}
+            style={{ width: '36px', height: '36px', borderRadius: '999px', display: 'grid', placeItems: 'center', flexShrink: 0, border: 'none', cursor: 'pointer', background: COLORS.primary }}
+          >
+            <Send size={16} color={COLORS.ink} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
