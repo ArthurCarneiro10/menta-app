@@ -8,7 +8,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 // ===== MODELO DE IA =====
 // Para trocar de modelo no futuro, mude SO esta linha.
 // Modelos pagos otimos: 'openai/gpt-4o-mini' ou 'anthropic/claude-3.5-haiku'
-const MODELO_IA = 'openrouter/free';
+const MODELO_IA = 'openai/gpt-4o-mini';
 // =========================
 
 export async function POST(request: Request) {
@@ -75,7 +75,7 @@ ${textoFatura.slice(0, 8000)}`;
       headers: {
         'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'http://localhost:3000',
+        'HTTP-Referer': 'https://app.mentaapp.com.br',
         'X-Title': 'Menta App',
       },
       body: JSON.stringify({
