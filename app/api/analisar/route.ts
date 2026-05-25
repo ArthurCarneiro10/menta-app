@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     const arrayBuffer = await arquivo.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default as any;
+   const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default;
     const dados = await pdfParse(buffer);
     const textoFatura = dados.text;
 
