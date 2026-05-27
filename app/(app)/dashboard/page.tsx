@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
+import SinoNotificacoes from '@/components/SinoNotificacoes';
  
 const CORES = ['#7ad9b7', '#7cdbb9', '#3d7d66', '#407c66', '#5a9e82', '#2d5f4d'];
  
@@ -26,6 +27,7 @@ function fmtShort(n: number) {
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [nome, setNome] = useState('');
   const [fatura, setFatura] = useState<Fatura | null>(null);
@@ -37,6 +39,7 @@ export default function DashboardPage() {
         router.push('/login');
         return;
       }
+      setUserId(user.id);
       setUserEmail(user.email || '');
  
       const perfil = await getOuCriaPerfil(user.id);
@@ -83,7 +86,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3">
             <a
               href="/config"
-              aria-label="Configuracoes"
+              aria-label="Configurações"
               className="w-10 h-10 grid place-items-center rounded-full border border-white/10 text-white/80 hover:text-white hover:bg-white/5 transition-colors no-underline shrink-0"
             >
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -97,7 +100,7 @@ export default function DashboardPage() {
                 Bem-vindo
               </p>
               <h1 className="text-2xl font-bold text-white mt-1">
-                Oi, <span className="text-[#7ad9b7]">{nome}👋</span>
+                Oi, <span className="text-[#7ad9b7]">{nome}</span>
               </h1>
             </div>
           </div>
@@ -108,13 +111,12 @@ export default function DashboardPage() {
             >
               Enviar fatura
             </a>
-
+            <SinoNotificacoes userId={userId} />
+           
           </div>
         </header>
  
-        <p className="text-white/50 text-xs mb-6">
-          Conectado como <span className="text-[#7ad9b7]">{userEmail}</span>
-        </p>
+  
  
         {!fatura && (
           <div className="rounded-3xl p-8 text-center bg-white/5 border border-white/10">
@@ -122,7 +124,7 @@ export default function DashboardPage() {
               Nenhuma fatura analisada ainda
             </p>
             <p className="text-white/60 text-sm mb-6">
-              Envie o PDF da sua fatura e a Menta organiza tudo pra voce.
+              Envie o PDF da sua fatura e a Menta organiza tudo pra você.
             </p>
             <a
               href="/upload"
@@ -154,9 +156,7 @@ export default function DashboardPage() {
                   ,{fmt(fatura.total).split(',')[1]}
                 </span>
               </div>
-              <p className="text-white/40 text-xs mt-3">
-                {fatura.nome_original}
-              </p>
+              
             </div>
  
             {fatura.insight && (

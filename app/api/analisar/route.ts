@@ -6,14 +6,12 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
  
 // ===== MODELO DE IA =====
-// Para trocar de modelo no futuro, mude SO esta linha.
 const MODELO_IA = 'anthropic/claude-haiku-4.5';
 // =========================
  
 type Transacao = { descricao: string; valor: number; categoria: string };
 type Categoria = { nome: string; valor: number };
  
-// Converte qualquer coisa (numero, "38,90", "R$ 1.234,56") num numero seguro.
 function num(v: unknown): number {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
   if (typeof v === 'string') {
@@ -33,8 +31,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
  
-// ===== RECONCILIACAO =====
-// A IA so identifica/classifica. A CONTA e feita aqui no codigo.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function reconcilia(analise: any) {
   const transacoesBrutas = Array.isArray(analise?.transacoes) ? analise.transacoes : [];
@@ -90,7 +86,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ erro: 'Sessao invalida ou expirada. Entre novamente.' }, { status: 401 });
     }
  
-    // ===== Le o corpo =====
     const body = await request.json();
     const faturaId = body.faturaId;
  
@@ -101,7 +96,7 @@ export async function POST(request: Request) {
     // ===== SEGURANCA: 2) busca a fatura e confirma que e do usuario =====
     const { data: fatura, error: faturaError } = await supabase
       .from('faturas')
-      .select('id, user_id, arquivo_path')
+      .select('id, user_id, arquivo_path, nome_original')
       .eq('id', faturaId)
       .single();
  
@@ -113,7 +108,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ erro: 'Essa fatura nao pertence a sua conta.' }, { status: 403 });
     }
  
-    // ===== SEGURANCA: 3) usa o caminho do BANCO, nunca o que veio do navegador =====
     const arquivoPath = fatura.arquivo_path;
  
     if (!arquivoPath) {
@@ -194,7 +188,6 @@ ${textoFatura.slice(0, 8000)}`;
     const dadosIA = await respostaIA.json();
     const conteudo = dadosIA.choices?.[0]?.message?.content || '';
  
-    // 5. Extrai SO o JSON da resposta
     const inicio = conteudo.indexOf('{');
     const fim = conteudo.lastIndexOf('}');
     if (inicio === -1 || fim === -1) {
@@ -215,7 +208,6 @@ ${textoFatura.slice(0, 8000)}`;
       );
     }
  
-    // 5.1 RECONCILIA
     const analise = reconcilia(analiseBruta);
  
     // 6. Salva no banco
@@ -231,7 +223,15 @@ ${textoFatura.slice(0, 8000)}`;
       })
       .eq('id', faturaId);
  
-    // 7. Retorna a analise
+    // 7. Cria notificacao para o usuario (com o insight como mensagem)
+    await supabase.from('notificacoes').insert({
+      user_id: user.id,
+      tipo: 'fatura_analisada',
+      titulo: 'Fatura analisada com sucesso',
+      mensagem: analise.insight || 'Sua fatura foi processada e categorizada pela IA.',
+    });
+ 
+    // 8. Retorna a analise
     return NextResponse.json({
       sucesso: true,
       analise,
