@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { getOuCriaPerfil } from '@/lib/perfil';
  
 const CORES = ['#7ad9b7', '#7cdbb9', '#3d7d66', '#407c66', '#5a9e82', '#2d5f4d'];
  
@@ -26,6 +27,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userEmail, setUserEmail] = useState('');
+  const [nome, setNome] = useState('');
   const [fatura, setFatura] = useState<Fatura | null>(null);
  
   useEffect(() => {
@@ -36,6 +38,10 @@ export default function DashboardPage() {
         return;
       }
       setUserEmail(user.email || '');
+ 
+      const perfil = await getOuCriaPerfil(user.id);
+      const nomeBase = perfil?.nome || (user.email ? user.email.split('@')[0] : 'voce');
+      setNome(nomeBase);
  
       const { data } = await supabase
         .from('faturas')
@@ -74,13 +80,26 @@ export default function DashboardPage() {
       <div className="max-w-2xl mx-auto px-5">
  
         <header className="flex items-center justify-between pt-10 pb-6">
-          <div>
-            <p className="text-xs tracking-widest uppercase font-semibold text-[#7cdbb9]">
-              Bem-vindo
-            </p>
-            <h1 className="text-2xl font-bold text-white mt-1">
-              Menta <span className="text-[#7ad9b7]">App</span>
-            </h1>
+          <div className="flex items-center gap-3">
+            <a
+              href="/config"
+              aria-label="Configuracoes"
+              className="w-10 h-10 grid place-items-center rounded-full border border-white/10 text-white/80 hover:text-white hover:bg-white/5 transition-colors no-underline shrink-0"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </a>
+            <div>
+              <p className="text-xs tracking-widest uppercase font-semibold text-[#7cdbb9]">
+                Bem-vindo
+              </p>
+              <h1 className="text-2xl font-bold text-white mt-1">
+                Oi, <span className="text-[#7ad9b7]">{nome}👋</span>
+              </h1>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <a
@@ -89,12 +108,7 @@ export default function DashboardPage() {
             >
               Enviar fatura
             </a>
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 text-white/70 hover:text-white text-sm font-medium border border-white/10 rounded-full hover:bg-white/5 transition-colors"
-            >
-              Sair
-            </button>
+
           </div>
         </header>
  

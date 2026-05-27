@@ -1,26 +1,67 @@
 'use client';
-
+ 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type Analise = { total: number; categorias: { nome: string; valor: number }[]; insight: string };
-
+type Aviso = { texto: string; tipo: 'erro' | 'ok' } | null;
+ 
+// ===== TRADUTOR DE ERROS =====
+// Pega o erro tecnico (do servidor/API) e devolve um texto que qualquer pessoa entende.
+function erroAmigavel(tecnico: string): string {
+  const t = (tecnico || '').toLowerCase();
+ 
+  if (t.includes('sessao') || t.includes('expirada') || t.includes('autoriz') || t.includes('login')) {
+    return 'Sua sessao expirou. Saia e entre de novo para continuar.';
+  }
+  if (t.includes('nao pertence') || t.includes('sua conta')) {
+    return 'Essa fatura nao esta disponivel na sua conta.';
+  }
+  if (t.includes('escaneada') || t.includes('legivel') || t.includes('imagem')) {
+    return 'Esse PDF parece ser uma imagem escaneada, sem texto que a Menta consiga ler. Tente enviar o PDF original da fatura, baixado direto do app ou site do banco.';
+  }
+  if (
+    t.includes('insufficient') || t.includes('credit') || t.includes('402') ||
+    t.includes('payment') || t.includes('quota') || t.includes('billing')
+  ) {
+    return 'A analise esta temporariamente indisponivel. Ja estamos cuidando disso, tente de novo em alguns minutos.';
+  }
+  if (t.includes('rate') || t.includes('429') || t.includes('too many')) {
+    return 'Muitas analises ao mesmo tempo. Espere alguns segundos e tente de novo.';
+  }
+  if (t.includes('baixar o arquivo') || t.includes('download') || t.includes('nao encontrad')) {
+    return 'Nao encontramos o arquivo enviado. Tente enviar a fatura novamente.';
+  }
+  if (t.includes('json') || t.includes('valido')) {
+    return 'A analise nao saiu como esperado dessa vez. E so tentar analisar de novo.';
+  }
+  if (t.includes('timeout') || t.includes('network') || t.includes('fetch') || t.includes('failed to')) {
+    return 'A conexao falhou no meio do caminho. Verifique sua internet e tente de novo.';
+  }
+  return 'Nao conseguimos analisar a fatura agora. Tente novamente em instantes.';
+}
+ 
 export default function UploadPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [message, setMessage] = useState('');
-
+  const [aviso, setAviso] = useState<Aviso>(null);
+ 
   // Guarda dados da fatura enviada (pra poder analisar)
   const [faturaId, setFaturaId] = useState('');
-  const [arquivoPath, setArquivoPath] = useState('');
   const [analisando, setAnalisando] = useState(false);
   const [analise, setAnalise] = useState<Analise | null>(null);
-
+ 
+  function mostraErro(texto: string) {
+    setAviso({ texto, tipo: 'erro' });
+  }
+  function mostraOk(texto: string) {
+    setAviso({ texto, tipo: 'ok' });
+  }
+ 
   useEffect(() => {
     async function checkUser() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -33,88 +74,100 @@ export default function UploadPage() {
     }
     checkUser();
   }, [router]);
-
+ 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = e.target.files?.[0];
     if (!selected) return;
     if (selected.type !== 'application/pdf') {
-      setMessage('Erro: por favor envie um arquivo PDF.');
+      mostraErro('Por enquanto a Menta so le arquivos PDF. Selecione o arquivo .pdf da sua fatura.');
       setFile(null);
       return;
     }
     setFile(selected);
-    setMessage('');
+    setAviso(null);
     setAnalise(null);
     setFaturaId('');
   }
-
+ 
   async function handleUpload() {
     if (!file) {
-      setMessage('Erro: selecione um arquivo primeiro.');
+      mostraErro('Escolha o PDF da fatura antes de enviar.');
       return;
     }
     setUploading(true);
-    setMessage('');
+    setAviso(null);
     setAnalise(null);
-
+ 
     const timestamp = Date.now();
     const path = `${userId}/${timestamp}-${file.name}`;
-
+ 
     const { error: uploadError } = await supabase.storage
       .from('faturas')
       .upload(path, file);
-
+ 
     if (uploadError) {
-      setMessage('Erro ao enviar: ' + uploadError.message);
+      mostraErro('Nao foi possivel enviar a fatura. Verifique sua internet e tente de novo.');
       setUploading(false);
       return;
     }
-
+ 
     const { data: inserida, error: dbError } = await supabase
       .from('faturas')
       .insert({ user_id: userId, arquivo_path: path, nome_original: file.name })
       .select()
       .single();
-
+ 
     if (dbError) {
-      setMessage('Erro ao registrar: ' + dbError.message);
+      mostraErro('Algo deu errado ao registrar a fatura. Tente enviar de novo.');
       setUploading(false);
       return;
     }
-
+ 
     setFaturaId(inserida.id);
-    setArquivoPath(path);
-    setMessage('Fatura enviada! Agora clique em Analisar com IA.');
+    mostraOk('Fatura enviada! Agora e so clicar em Analisar com IA.');
     setFile(null);
     setUploading(false);
   }
-
+ 
   async function handleAnalisar() {
     setAnalisando(true);
-    setMessage('');
-
+    setAviso(null);
+ 
     try {
-      const resp = await fetch('/api/analisar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ arquivoPath, faturaId }),
-      });
-      const dados = await resp.json();
-
-      if (!dados.sucesso) {
-        setMessage('Erro ao analisar: ' + (dados.erro || 'desconhecido'));
+      // Pega o token da sessao para a rota confirmar quem esta chamando
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+ 
+      if (!token) {
+        mostraErro('Sua sessao expirou. Saia e entre de novo para continuar.');
         setAnalisando(false);
         return;
       }
-
+ 
+      const resp = await fetch('/api/analisar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ faturaId }),
+      });
+      const dados = await resp.json();
+ 
+      if (!dados.sucesso) {
+        mostraErro(erroAmigavel(dados.erro || ''));
+        setAnalisando(false);
+        return;
+      }
+ 
       setAnalise(dados.analise);
-      setMessage('');
+      setAviso(null);
     } catch {
-      setMessage('Erro ao analisar a fatura.');
+      mostraErro('A conexao falhou no meio do caminho. Verifique sua internet e tente de novo.');
     }
     setAnalisando(false);
   }
-
+ 
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
@@ -122,7 +175,7 @@ export default function UploadPage() {
       </main>
     );
   }
-
+ 
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
       <div className="max-w-2xl mx-auto">
@@ -134,13 +187,13 @@ export default function UploadPage() {
             Voltar
           </a>
         </header>
-
+ 
         <div className="bg-white/5 backdrop-blur border border-white/10 rounded-2xl p-8">
           <h2 className="text-3xl font-bold text-white mb-2">Enviar fatura</h2>
           <p className="text-white/60 mb-8">
             Envie o PDF da fatura do seu cartao para a Menta analisar.
           </p>
-
+ 
           <label className="block border-2 border-dashed border-white/20 rounded-xl p-10 text-center cursor-pointer hover:border-[#7ad9b7]/50 transition-colors">
             <input type="file" accept="application/pdf" onChange={handleFileChange} className="hidden" />
             <div className="text-white/60">
@@ -154,7 +207,7 @@ export default function UploadPage() {
               )}
             </div>
           </label>
-
+ 
           <button
             onClick={handleUpload}
             disabled={!file || uploading}
@@ -162,7 +215,7 @@ export default function UploadPage() {
           >
             {uploading ? 'Enviando...' : 'Enviar fatura'}
           </button>
-
+ 
           {/* Botao de analisar (so aparece depois do upload) */}
           {faturaId && !analise && (
             <button
@@ -173,13 +226,20 @@ export default function UploadPage() {
               {analisando ? 'Analisando com IA... (pode demorar)' : 'Analisar com IA'}
             </button>
           )}
-
-          {message && (
-            <p className={`text-sm text-center mt-4 ${message.startsWith('Erro') ? 'text-red-400' : 'text-[#7ad9b7]'}`}>
-              {message}
-            </p>
+ 
+          {/* Aviso amigavel (erro ou sucesso) */}
+          {aviso && (
+            <div
+              className={`mt-4 rounded-xl px-4 py-3 text-sm text-center border ${
+                aviso.tipo === 'erro'
+                  ? 'bg-red-500/10 border-red-400/20 text-red-200'
+                  : 'bg-[#7ad9b7]/10 border-[#7ad9b7]/25 text-[#7ad9b7]'
+              }`}
+            >
+              {aviso.texto}
+            </div>
           )}
-
+ 
           {/* Resultado da analise */}
           {analise && (
             <div className="mt-6 rounded-xl bg-white p-5">
