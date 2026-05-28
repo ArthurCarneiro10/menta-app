@@ -1,9 +1,9 @@
 'use client';
  
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { getOuCriaPerfil, salvaPerfil } from '@/lib/perfil';
+import { getOuCriaPerfil, salvaPerfil, salvaFoto } from '@/lib/perfil';
  
 /* ---------- Icones (SVG inline, sem dependencia externa) ---------- */
 function Icon({ name }: { name: string }) {
@@ -171,7 +171,11 @@ export default function ConfigPage() {
   const [email, setEmail] = useState('');
   const [nome, setNome] = useState('');
   const [idade, setIdade] = useState('');
+  const [fotoUrl, setFotoUrl] = useState<string | null>(null);
+  const [enviandoFoto, setEnviandoFoto] = useState(false);
   const [mensagem, setMensagem] = useState('');
+  const [avisoFoto, setAvisoFoto] = useState<{ texto: string; tipo: 'erro' | 'ok' } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
  
   useEffect(() => {
     async function init() {
@@ -187,6 +191,7 @@ export default function ConfigPage() {
       if (perfil) {
         setNome(perfil.nome || '');
         setIdade(perfil.idade ? String(perfil.idade) : '');
+        setFotoUrl(perfil.foto_url || null);
       }
       setLoading(false);
     }
@@ -205,7 +210,41 @@ export default function ConfigPage() {
     });
  
     setSalvando(false);
-    setMensagem(error ? 'Nao foi possivel salvar. Tente de novo.' : 'Tudo certo! Seus dados foram salvos.');
+    setMensagem(error ? 'Não foi possível salvar. Tente de novo.' : 'Tudo certo! Seus dados foram salvos.');
+  }
+ 
+  function abrirSeletorFoto() {
+    fileInputRef.current?.click();
+  }
+ 
+  async function handleFotoSelecionada(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+ 
+    if (!file.type.startsWith('image/')) {
+      setAvisoFoto({ texto: 'Selecione um arquivo de imagem (JPG, PNG, etc).', tipo: 'erro' });
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setAvisoFoto({ texto: 'Imagem muito grande. Use uma imagem menor que 2 MB.', tipo: 'erro' });
+      return;
+    }
+ 
+    setEnviandoFoto(true);
+    setAvisoFoto(null);
+ 
+    const { url, error } = await salvaFoto(userId, file);
+ 
+    setEnviandoFoto(false);
+ 
+    if (error || !url) {
+      setAvisoFoto({ texto: 'Não foi possível salvar a foto. Tente de novo.', tipo: 'erro' });
+      return;
+    }
+ 
+    setFotoUrl(url);
+    setAvisoFoto({ texto: 'Foto atualizada!', tipo: 'ok' });
+    e.target.value = '';
   }
  
   async function handleLogout() {
@@ -231,7 +270,7 @@ export default function ConfigPage() {
         <header className="flex items-center justify-between pt-10 pb-6">
           <div>
             <p className="text-xs tracking-widest uppercase font-semibold text-[#7cdbb9]">
-              Configuracoes
+              Configurações
             </p>
             <h1 className="text-2xl font-bold text-white mt-1">
               Seu <span className="text-[#7ad9b7]">perfil</span>
@@ -245,20 +284,51 @@ export default function ConfigPage() {
           </a>
         </header>
  
-        {/* Avatar + foto (em breve) */}
+        {/* Avatar clicavel + foto */}
         <div className="flex flex-col items-center mb-8">
-          <div className="relative">
-            <div className="w-24 h-24 rounded-full grid place-items-center text-4xl font-bold text-[#0c2019] bg-[#7ad9b7]">
-              {inicial}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFotoSelecionada}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={abrirSeletorFoto}
+            disabled={enviandoFoto}
+            aria-label="Trocar foto de perfil"
+            className="relative cursor-pointer disabled:opacity-50"
+          >
+            <div className="w-24 h-24 rounded-full grid place-items-center text-4xl font-bold text-[#0c2019] bg-[#7ad9b7] overflow-hidden">
+              {fotoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={fotoUrl} alt="Foto de perfil" className="w-full h-full object-cover" />
+              ) : (
+                <span>{inicial}</span>
+              )}
             </div>
-            <span className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full grid place-items-center bg-white/10 border border-white/20 text-white/40">
+            <span className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full grid place-items-center bg-white/15 border border-white/20 text-white/80">
               <Icon name="camera" />
             </span>
-          </div>
-          <p className="text-white/30 text-xs mt-3">Foto de perfil em breve</p>
+          </button>
+          <p className="text-white/40 text-xs mt-3">
+            {enviandoFoto ? 'Enviando foto...' : 'Toque para trocar a foto'}
+          </p>
+          {avisoFoto && (
+            <div
+              className={`mt-2 rounded-xl px-3 py-2 text-xs text-center border ${
+                avisoFoto.tipo === 'erro'
+                  ? 'bg-red-500/10 border-red-400/20 text-red-200'
+                  : 'bg-[#7ad9b7]/10 border-[#7ad9b7]/25 text-[#7ad9b7]'
+              }`}
+            >
+              {avisoFoto.texto}
+            </div>
+          )}
         </div>
  
-        {/* PERFIL (ativo) */}
+        {/* PERFIL */}
         <Secao titulo="Perfil">
           <div className="px-4 py-4 space-y-4">
             <div>
@@ -269,7 +339,7 @@ export default function ConfigPage() {
                 type="text"
                 value={nome}
                 onChange={(e) => setNome(e.target.value)}
-                placeholder="Como voce quer ser chamado"
+                placeholder="Como você quer ser chamado"
                 className="w-full px-4 py-3 rounded-2xl bg-white/10 text-white placeholder-white/30 border border-white/10 outline-none focus:border-[#7ad9b7] transition-colors"
               />
             </div>
@@ -298,7 +368,7 @@ export default function ConfigPage() {
               disabled={salvando}
               className="w-full px-6 py-3 rounded-full text-sm font-bold bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9] transition-colors disabled:opacity-50"
             >
-              {salvando ? 'Salvando...' : 'Salvar alteracoes'}
+              {salvando ? 'Salvando...' : 'Salvar alterações'}
             </button>
             {mensagem && (
               <p className="text-center text-sm text-[#7ad9b7]">{mensagem}</p>
@@ -307,22 +377,22 @@ export default function ConfigPage() {
         </Secao>
  
         {/* CONTA E SEGURANCA */}
-        <Secao titulo="Conta e seguranca">
-          <Row icon="lock" label="Trocar senha" emBreve />
-          <Row icon="camera" label="Foto de perfil" emBreve />
+        <Secao titulo="Conta e segurança">
+          <Row icon="lock" label="Trocar senha" onClick={() => router.push('/config/senha')} />
+          <Row icon="camera" label="Foto de perfil" onClick={abrirSeletorFoto} />
         </Secao>
  
         {/* PREFERENCIAS */}
-        <Secao titulo="Preferencias">
-          <Row icon="bell" label="Notificacoes" emBreve />
+        <Secao titulo="Preferências">
+          <Row icon="bell" label="Notificações" emBreve />
           <Row icon="theme" label="Tema (claro / escuro)" emBreve />
         </Secao>
  
         {/* SOBRE */}
         <Secao titulo="Sobre">
-          <Row icon="info" label="Versao 1.0.0" />
+          <Row icon="info" label="Versão 1.0.0" />
           <Row icon="doc" label="Termos de uso" emBreve />
-          <Row icon="shield" label="Politica de privacidade" emBreve />
+          <Row icon="shield" label="Política de privacidade" emBreve />
           <Row icon="mail" label="Suporte e contato" emBreve />
         </Secao>
  
