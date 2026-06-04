@@ -16,6 +16,11 @@ type Fatura = {
   nome_original: string;
   analisado_em: string;
 };
+type Transacao = {
+  valor: number | string | null;
+  tipo: string | null;
+  categoria: string | null;
+};
  
 function fmt(n: number) {
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -28,9 +33,20 @@ export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState('');
-  const [userEmail, setUserEmail] = useState('');
   const [nome, setNome] = useState('');
+  const [plano, setPlano] = useState<'free' | 'premium'>('free');
+ 
+  // Estado FREE: ultima fatura analisada
   const [fatura, setFatura] = useState<Fatura | null>(null);
+ 
+  // Estado PREMIUM: dados agregados do banco
+  const [temConexao, setTemConexao] = useState(false);
+  const [totalBanco, setTotalBanco] = useState(0);
+  const [categoriasBanco, setCategoriasBanco] = useState<Categoria[]>([]);
+  const [temTxRecente, setTemTxRecente] = useState(false);
+ 
+  // Para ambos: tem PDFs antigos pra acessar?
+  const [temFaturasAntigas, setTemFaturasAntigas] = useState(false);
  
   useEffect(() => {
     async function init() {
@@ -40,31 +56,84 @@ export default function DashboardPage() {
         return;
       }
       setUserId(user.id);
-      setUserEmail(user.email || '');
  
       const perfil = await getOuCriaPerfil(user.id);
       const nomeBase = perfil?.nome || (user.email ? user.email.split('@')[0] : 'voce');
       setNome(nomeBase);
  
-      const { data } = await supabase
-        .from('faturas')
-        .select('total, categorias, insight, nome_original, analisado_em')
-        .eq('user_id', user.id)
-        .not('analisado_em', 'is', null)
-        .order('analisado_em', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const ehPremium = perfil?.plano === 'premium';
+      setPlano(ehPremium ? 'premium' : 'free');
  
-      if (data) setFatura(data as Fatura);
+      // Faturas antigas em PDF (vale para Free e Premium)
+      const { count: fatCount } = await supabase
+        .from('faturas')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .not('analisado_em', 'is', null);
+      const temPDFs = (fatCount || 0) > 0;
+      setTemFaturasAntigas(temPDFs);
+ 
+      if (ehPremium) {
+        // ===== PREMIUM =====
+        // 1) Tem conexao com banco?
+        const { count: connCount } = await supabase
+          .from('connections')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id);
+        const conectado = (connCount || 0) > 0;
+        setTemConexao(conectado);
+ 
+        if (conectado) {
+          // 2) Transacoes dos ultimos 30 dias
+          const trinta = new Date();
+          trinta.setDate(trinta.getDate() - 30);
+          const limite = trinta.toISOString().slice(0, 10);
+ 
+          const { data: txs } = await supabase
+            .from('transacoes_banco')
+            .select('valor, tipo, categoria')
+            .eq('user_id', user.id)
+            .gte('data', limite);
+ 
+          const debits: Transacao[] = (txs || []).filter((t: Transacao) => t.tipo === 'DEBIT');
+ 
+          if (debits.length > 0) {
+            setTemTxRecente(true);
+ 
+            let total = 0;
+            const mapa = new Map<string, number>();
+            for (const t of debits) {
+              const v = Math.abs(Number(t.valor || 0));
+              total += v;
+              const cat = (t.categoria || 'Outros').trim() || 'Outros';
+              mapa.set(cat, (mapa.get(cat) || 0) + v);
+            }
+ 
+            setTotalBanco(total);
+            const cats = Array.from(mapa.entries())
+              .map(([nome, valor]) => ({ nome, valor }))
+              .sort((a, b) => b.valor - a.valor);
+            setCategoriasBanco(cats);
+          }
+        }
+      } else {
+        // ===== FREE =====
+        const { data } = await supabase
+          .from('faturas')
+          .select('total, categorias, insight, nome_original, analisado_em')
+          .eq('user_id', user.id)
+          .not('analisado_em', 'is', null)
+          .order('analisado_em', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+ 
+        if (data) setFatura(data as Fatura);
+      }
+ 
       setLoading(false);
     }
     init();
   }, [router]);
- 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.push('/login');
-  }
  
   if (loading) {
     return (
@@ -74,7 +143,13 @@ export default function DashboardPage() {
     );
   }
  
-  const soma = fatura
+  // Define o CTA principal do header conforme estado
+  const ctaHeader =
+    plano === 'premium'
+      ? { href: '/conectar', label: temConexao ? 'Banco' : 'Conectar banco' }
+      : { href: '/upload', label: 'Enviar fatura' };
+ 
+  const somaFatura = fatura
     ? fatura.categorias.reduce((acc, c) => acc + (c.valor || 0), 0)
     : 0;
  
@@ -106,19 +181,17 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-3">
             <a
-              href="/upload"
+              href={ctaHeader.href}
               className="px-4 py-2 rounded-full text-sm font-bold bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9] transition-colors no-underline"
             >
-              Enviar fatura
+              {ctaHeader.label}
             </a>
             <SinoNotificacoes userId={userId} />
-           
           </div>
         </header>
  
-  
- 
-        {!fatura && (
+        {/* =========== ESTADO FREE =========== */}
+        {plano === 'free' && !fatura && (
           <div className="rounded-3xl p-8 text-center bg-white/5 border border-white/10">
             <p className="text-white text-lg font-bold mb-2">
               Nenhuma fatura analisada ainda
@@ -135,7 +208,7 @@ export default function DashboardPage() {
           </div>
         )}
  
-        {fatura && (
+        {plano === 'free' && fatura && (
           <>
             <div
               className="rounded-3xl overflow-hidden relative p-6"
@@ -156,7 +229,6 @@ export default function DashboardPage() {
                   ,{fmt(fatura.total).split(',')[1]}
                 </span>
               </div>
-              
             </div>
  
             {fatura.insight && (
@@ -183,7 +255,7 @@ export default function DashboardPage() {
               </h2>
               <div className="space-y-2">
                 {fatura.categorias.map((cat, i) => {
-                  const pct = soma > 0 ? (cat.valor / soma) * 100 : 0;
+                  const pct = somaFatura > 0 ? (cat.valor / somaFatura) * 100 : 0;
                   return (
                     <div key={i} className="bg-white rounded-2xl p-3" style={{ border: '1px solid #eef2ef' }}>
                       <div className="flex items-center justify-between mb-1">
@@ -202,6 +274,110 @@ export default function DashboardPage() {
               </div>
             </div>
           </>
+        )}
+ 
+        {/* =========== ESTADO PREMIUM SEM CONEXAO =========== */}
+        {plano === 'premium' && !temConexao && (
+          <div className="rounded-3xl p-8 text-center bg-white/5 border border-white/10">
+            <div className="w-16 h-16 mx-auto rounded-full grid place-items-center bg-[#7ad9b7]/20 text-[#7ad9b7] mb-4">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+              </svg>
+            </div>
+            <p className="text-white text-lg font-bold mb-2">
+              Bem-vindo ao Premium
+            </p>
+            <p className="text-white/60 text-sm mb-6 leading-relaxed">
+              Conecte sua conta bancária para a Menta puxar suas transações automaticamente.
+            </p>
+            <a
+              href="/conectar"
+              className="inline-block px-6 py-3 rounded-full text-sm font-bold bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9] transition-colors no-underline"
+            >
+              Conectar conta bancária
+            </a>
+          </div>
+        )}
+ 
+        {/* =========== ESTADO PREMIUM COM CONEXAO MAS SEM TX RECENTE =========== */}
+        {plano === 'premium' && temConexao && !temTxRecente && (
+          <div className="rounded-3xl p-8 text-center bg-white/5 border border-white/10">
+            <p className="text-white text-lg font-bold mb-2">
+              Sem transações nos últimos 30 dias
+            </p>
+            <p className="text-white/60 text-sm mb-6 leading-relaxed">
+              Sua conta está conectada. Sincronize de novo ou aguarde novas transações aparecerem aqui.
+            </p>
+            <a
+              href="/conectar"
+              className="inline-block px-6 py-3 rounded-full text-sm font-bold bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9] transition-colors no-underline"
+            >
+              Sincronizar agora
+            </a>
+          </div>
+        )}
+ 
+        {/* =========== ESTADO PREMIUM COM TX RECENTE =========== */}
+        {plano === 'premium' && temTxRecente && (
+          <>
+            <div
+              className="rounded-3xl overflow-hidden relative p-6"
+              style={{
+                background: 'linear-gradient(155deg, #183e31 0%, #0c2019 60%, #0c1f18 100%)',
+                boxShadow: '0 20px 60px -20px rgba(0,0,0,0.5)',
+              }}
+            >
+              <p className="text-xs uppercase tracking-widest font-bold text-[#7cdbb9]">
+                Total gasto — últimos 30 dias
+              </p>
+              <div className="flex items-baseline gap-2 mt-2">
+                <span className="text-white/60 text-lg font-medium">R$</span>
+                <span className="text-white text-5xl font-bold tracking-tight">
+                  {fmtShort(totalBanco)}
+                </span>
+                <span className="text-white/40 text-2xl font-medium">
+                  ,{fmt(totalBanco).split(',')[1]}
+                </span>
+              </div>
+            </div>
+ 
+            <div className="mt-6">
+              <h2 className="font-bold text-base text-white mb-3">
+                Para onde foi o dinheiro
+              </h2>
+              <div className="space-y-2">
+                {categoriasBanco.map((cat, i) => {
+                  const pct = totalBanco > 0 ? (cat.valor / totalBanco) * 100 : 0;
+                  return (
+                    <div key={i} className="bg-white rounded-2xl p-3" style={{ border: '1px solid #eef2ef' }}>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="font-semibold text-sm text-[#010302]">{cat.nome}</p>
+                        <p className="font-bold text-sm text-[#010302]">R$ {fmt(cat.valor)}</p>
+                      </div>
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#f0f4f1' }}>
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${pct}%`, background: CORES[i % CORES.length] }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+ 
+        {/* Link discreto pro historico de PDFs (so se tiver faturas antigas) */}
+        {temFaturasAntigas && plano === 'premium' && (
+          <div className="mt-8 text-center">
+            <a
+              href="/gastos"
+              className="text-white/40 hover:text-white/70 text-sm transition-colors no-underline"
+            >
+              Ver histórico de faturas em PDF →
+            </a>
+          </div>
         )}
  
       </div>

@@ -1,26 +1,86 @@
 @import "tailwindcss";
-
+ 
+/* ===== Base do Next/Tailwind (nao remover) ===== */
 :root {
   --background: #ffffff;
   --foreground: #171717;
 }
-
+ 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+ 
+/* =========================================================
+   TEMAS DA MENTA
+   ========================================================= */
+ 
+.tema-escuro {
+  --grad-1: #0c2019;
+  --grad-2: #183e31;
+  --grad-3: #0c1f18;
+ 
+  --texto: #ffffff;
+  --texto-suave: rgba(255, 255, 255, 0.65);
+  --texto-fraco: rgba(255, 255, 255, 0.40);
+ 
+  --superficie: rgba(255, 255, 255, 0.05);
+  --superficie-2: rgba(255, 255, 255, 0.10);
+  --borda: rgba(255, 255, 255, 0.10);
+  --borda-suave: rgba(255, 255, 255, 0.06);
+ 
+  --painel: #102a21;
+  --painel-borda: rgba(255, 255, 255, 0.10);
+ 
+  --accent: #7ad9b7;
+  --accent-texto: #7cdbb9;
+ 
+  --erro-bg: rgba(239, 68, 68, 0.10);
+  --erro-borda: rgba(248, 113, 113, 0.25);
+  --erro-texto: #fecaca;
+ 
+  --ok-bg: rgba(122, 217, 183, 0.10);
+  --ok-borda: rgba(122, 217, 183, 0.25);
+  --ok-texto: #7cdbb9;
 }
-
+ 
+.tema-claro {
+  --grad-1: #eef4f0;
+  --grad-2: #ffffff;
+  --grad-3: #e6efe9;
+ 
+  --texto: #0c2019;
+  --texto-suave: #4a5650;
+  --texto-fraco: #86958f;
+ 
+  --superficie: #ffffff;
+  --superficie-2: #eef3f0;
+  --borda: #e2e9e5;
+  --borda-suave: #eef2ef;
+ 
+  --painel: #ffffff;
+  --painel-borda: #e2e9e5;
+ 
+  --accent: #7ad9b7;
+  --accent-texto: #2f6b54;
+ 
+  --erro-bg: #fdecec;
+  --erro-borda: #f3c6c6;
+  --erro-texto: #b3261e;
+ 
+  --ok-bg: #e7f5ef;
+  --ok-borda: #bfe6d5;
+  --ok-texto: #2f6b54;
+}
+ 
+/* Fundo de tela com gradiente que responde ao tema (usado por paginas que querem ser tematicas) */
+.menta-screen {
+  background: linear-gradient(to bottom right, var(--grad-1), var(--grad-2), var(--grad-3));
+}
+ 
+/* Body sem cor forcada - cada pagina cuida do proprio fundo */
 body {
-  background: var(--background);
-  color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }

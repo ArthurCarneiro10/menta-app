@@ -3,12 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { getOuCriaPerfil } from '@/lib/perfil';
  
 type Analise = { total: number; categorias: { nome: string; valor: number }[]; insight: string };
 type Aviso = { texto: string; tipo: 'erro' | 'ok' } | null;
  
-// ===== TRADUTOR DE ERROS =====
-// Pega o erro tecnico (do servidor/API) e devolve um texto que qualquer pessoa entende.
 function erroAmigavel(tecnico: string): string {
   const t = (tecnico || '').toLowerCase();
  
@@ -46,21 +45,17 @@ export default function UploadPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState('');
+  const [plano, setPlano] = useState<'free' | 'premium'>('free');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [aviso, setAviso] = useState<Aviso>(null);
  
-  // Guarda dados da fatura enviada (pra poder analisar)
   const [faturaId, setFaturaId] = useState('');
   const [analisando, setAnalisando] = useState(false);
   const [analise, setAnalise] = useState<Analise | null>(null);
  
-  function mostraErro(texto: string) {
-    setAviso({ texto, tipo: 'erro' });
-  }
-  function mostraOk(texto: string) {
-    setAviso({ texto, tipo: 'ok' });
-  }
+  function mostraErro(texto: string) { setAviso({ texto, tipo: 'erro' }); }
+  function mostraOk(texto: string) { setAviso({ texto, tipo: 'ok' }); }
  
   useEffect(() => {
     async function checkUser() {
@@ -70,6 +65,11 @@ export default function UploadPage() {
         return;
       }
       setUserId(user.id);
+ 
+      const perfil = await getOuCriaPerfil(user.id);
+      if (perfil?.plano === 'premium') {
+        setPlano('premium');
+      }
       setLoading(false);
     }
     checkUser();
@@ -134,7 +134,6 @@ export default function UploadPage() {
     setAviso(null);
  
     try {
-      // Pega o token da sessao para a rota confirmar quem esta chamando
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
  
@@ -179,7 +178,7 @@ export default function UploadPage() {
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
       <div className="max-w-2xl mx-auto">
-        <header className="flex items-center justify-between mb-12 pt-8">
+        <header className="flex items-center justify-between mb-8 pt-8">
           <h1 className="text-2xl font-bold text-white">
             Menta <span className="text-[#7ad9b7]">App</span>
           </h1>
@@ -187,6 +186,57 @@ export default function UploadPage() {
             Voltar
           </a>
         </header>
+ 
+        {/* Banner para usuarios Free - upsell */}
+        {plano === 'free' && (
+          <div className="rounded-2xl p-4 mb-6 bg-[#7ad9b7]/10 border border-[#7ad9b7]/25 flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full grid place-items-center shrink-0 bg-[#7ad9b7]/20 text-[#7ad9b7]">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <p className="text-white font-bold text-sm">Cansado de enviar PDF?</p>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
+                  Premium
+                </span>
+              </div>
+              <p className="text-white/60 text-xs leading-relaxed">
+                Conecte sua conta bancaria direto e a Menta atualiza tudo sozinha, sem voce precisar mandar nada.{' '}
+                <span className="text-white/40">Em breve.</span>
+              </p>
+            </div>
+          </div>
+        )}
+ 
+        {/* Banner para usuarios Premium - CTA para conectar */}
+        {plano === 'premium' && (
+          <div className="rounded-2xl p-4 mb-6 bg-[#7ad9b7]/10 border border-[#7ad9b7]/25 flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full grid place-items-center shrink-0 bg-[#7ad9b7]/20 text-[#7ad9b7]">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <p className="text-white font-bold text-sm">Pule o PDF</p>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
+                  Premium
+                </span>
+              </div>
+              <p className="text-white/60 text-xs leading-relaxed mb-2">
+                Conecte sua conta bancaria direto e a Menta atualiza tudo sozinha.
+              </p>
+              <button
+                onClick={() => router.push('/conectar')}
+                className="text-[#7ad9b7] font-semibold text-xs hover:underline"
+              >
+                Conectar agora →
+              </button>
+            </div>
+          </div>
+        )}
  
         <div className="bg-white/5 backdrop-blur border border-white/10 rounded-2xl p-8">
           <h2 className="text-3xl font-bold text-white mb-2">Enviar fatura</h2>
@@ -216,7 +266,6 @@ export default function UploadPage() {
             {uploading ? 'Enviando...' : 'Enviar fatura'}
           </button>
  
-          {/* Botao de analisar (so aparece depois do upload) */}
           {faturaId && !analise && (
             <button
               onClick={handleAnalisar}
@@ -227,7 +276,6 @@ export default function UploadPage() {
             </button>
           )}
  
-          {/* Aviso amigavel (erro ou sucesso) */}
           {aviso && (
             <div
               className={`mt-4 rounded-xl px-4 py-3 text-sm text-center border ${
@@ -240,7 +288,6 @@ export default function UploadPage() {
             </div>
           )}
  
-          {/* Resultado da analise */}
           {analise && (
             <div className="mt-6 rounded-xl bg-white p-5">
               <p className="text-xs font-bold uppercase tracking-widest text-[#3d7d66] mb-3">

@@ -172,6 +172,7 @@ export default function ConfigPage() {
   const [nome, setNome] = useState('');
   const [idade, setIdade] = useState('');
   const [fotoUrl, setFotoUrl] = useState<string | null>(null);
+  const [plano, setPlano] = useState<'free' | 'premium'>('free');
   const [enviandoFoto, setEnviandoFoto] = useState(false);
   const [mensagem, setMensagem] = useState('');
   const [avisoFoto, setAvisoFoto] = useState<{ texto: string; tipo: 'erro' | 'ok' } | null>(null);
@@ -192,6 +193,7 @@ export default function ConfigPage() {
         setNome(perfil.nome || '');
         setIdade(perfil.idade ? String(perfil.idade) : '');
         setFotoUrl(perfil.foto_url || null);
+        if (perfil.plano === 'premium') setPlano('premium');
       }
       setLoading(false);
     }
@@ -363,6 +365,25 @@ export default function ConfigPage() {
                 {email}
               </div>
             </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-widest mb-2 text-white/50">
+                Plano
+              </label>
+              <div className="w-full px-4 py-3 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-between">
+                <span className="text-white font-medium">
+                  {plano === 'premium' ? 'Premium' : 'Free'}
+                </span>
+                {plano === 'premium' ? (
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
+                    Ativo
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-white/5 text-white/40 border border-white/10">
+                    Upgrade em breve
+                  </span>
+                )}
+              </div>
+            </div>
             <button
               onClick={handleSalvar}
               disabled={salvando}
@@ -398,7 +419,7 @@ export default function ConfigPage() {
  
         {/* ZONA DE PERIGO */}
         <Secao titulo="Zona de perigo">
-          <Row icon="trash" label="Excluir minha conta" danger emBreve />
+          <Row icon="trash" label="Excluir minha conta" danger onClick={() => router.push('/config/excluir')} />
         </Secao>
  
         {/* Sair */}

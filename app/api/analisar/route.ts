@@ -31,6 +31,11 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
  
+// Formata numero como R$ 1.234,56
+function reais(n: number): string {
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+ 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function reconcilia(analise: any) {
   const transacoesBrutas = Array.isArray(analise?.transacoes) ? analise.transacoes : [];
@@ -223,7 +228,7 @@ ${textoFatura.slice(0, 8000)}`;
       })
       .eq('id', faturaId);
  
-    // 7. Cria notificacao para o usuario (com o insight como mensagem)
+    // 7. Notificacao de fatura analisada (com o insight como mensagem)
     await supabase.from('notificacoes').insert({
       user_id: user.id,
       tipo: 'fatura_analisada',
@@ -231,7 +236,77 @@ ${textoFatura.slice(0, 8000)}`;
       mensagem: analise.insight || 'Sua fatura foi processada e categorizada pela IA.',
     });
  
-    // 8. Retorna a analise
+    // 8. GASTO FORA DO PADRAO (5.9.B)
+    //    Compara cada categoria com a fatura anterior. Se disparou, gera notificacao.
+    try {
+      const { data: anterioresArray } = await supabase
+        .from('faturas')
+        .select('categorias, criado_em')
+        .eq('user_id', user.id)
+        .not('analisado_em', 'is', null)
+        .neq('id', faturaId)
+        .order('criado_em', { ascending: false })
+        .limit(1);
+ 
+      const anterior = anterioresArray?.[0];
+      const categoriasAnteriores = Array.isArray(anterior?.categorias) ? anterior.categorias : null;
+ 
+      if (categoriasAnteriores) {
+        const mapaAnterior = new Map<string, number>();
+        for (const c of categoriasAnteriores as Categoria[]) {
+          if (c?.nome && typeof c.valor === 'number') {
+            mapaAnterior.set(c.nome, c.valor);
+          }
+        }
+ 
+        type Spike = { categoria: string; pct: number; novoValor: number; anteriorValor: number; diff: number };
+        const spikes: Spike[] = [];
+ 
+        for (const c of analise.categorias) {
+          const ant = mapaAnterior.get(c.nome) || 0;
+          const diff = c.valor - ant;
+ 
+          // Regra: subiu >= 50% E aumento >= R$ 50
+          // Categoria nova (ant === 0): so alerta se valor novo >= R$ 50
+          const subiuMuito = ant > 0 ? (diff / ant) >= 0.5 : c.valor >= 50;
+          const aumentoRelevante = diff >= 50;
+ 
+          if (subiuMuito && aumentoRelevante) {
+            const pct = ant > 0 ? Math.round((diff / ant) * 100) : 0;
+            spikes.push({ categoria: c.nome, pct, novoValor: c.valor, anteriorValor: ant, diff });
+          }
+        }
+ 
+        // Ordena por maior aumento absoluto e pega top 3
+        spikes.sort((a, b) => b.diff - a.diff);
+        const topSpikes = spikes.slice(0, 3);
+ 
+        if (topSpikes.length > 0) {
+          const partes = topSpikes.map((s) => {
+            if (s.anteriorValor === 0) {
+              return `${s.categoria}: novo gasto de R$ ${reais(s.novoValor)}`;
+            }
+            return `${s.categoria}: subiu ${s.pct}% (R$ ${reais(s.novoValor)})`;
+          });
+ 
+          const titulo = topSpikes.length === 1
+            ? 'Um gasto subiu bastante este mes'
+            : 'Alguns gastos dispararam este mes';
+ 
+          await supabase.from('notificacoes').insert({
+            user_id: user.id,
+            tipo: 'gasto_disparou',
+            titulo,
+            mensagem: partes.join(' · '),
+          });
+        }
+      }
+    } catch (e) {
+      // Se a comparacao falhar por qualquer motivo, nao quebra a analise principal.
+      console.error('Falha ao detectar gasto fora do padrao:', e);
+    }
+ 
+    // 9. Retorna a analise
     return NextResponse.json({
       sucesso: true,
       analise,
