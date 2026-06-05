@@ -196,3 +196,10 @@ export async function getTransactions(
  
   return all;
 }
+/**
+ * Deleta um item (conexao bancaria) na Pluggy.
+ * Apaga so na Pluggy. Limpeza local fica por conta de quem chama.
+ */
+export async function deleteItem(itemId: string): Promise<void> {
+  await pluggyFetch(`/items/${itemId}`, { method: 'DELETE' });
+}

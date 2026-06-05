@@ -1,10 +1,12 @@
 /**
  * Webhook Pluggy: recebe eventos automaticos.
  *
- * VERSAO DE DESCOBERTA (Wave 6.6 - parte 1):
- * - Aceita webhooks SEM exigir assinatura por enquanto
- * - Loga todos os headers recebidos pra descobrir como a Pluggy assina
- * - Para virar "strict" depois: setar PLUGGY_WEBHOOK_STRICT=true
+ * Modo de operacao via env vars:
+ *   - PLUGGY_WEBHOOK_SECRET   -> chave HMAC para validar assinatura
+ *   - PLUGGY_WEBHOOK_STRICT   -> 'true' rejeita sem assinatura valida
+ *   - PLUGGY_WEBHOOK_VERBOSE  -> 'true' loga payload completo e headers
+ *
+ * Em modo padrao (sem strict, sem verbose): so loga essencial.
  *
  * Eventos tratados:
  *   - item/updated, item/created, transactions/*  -> sincroniza
@@ -27,6 +29,7 @@ const supabase = createClient(
  
 const SIGNING_SECRET = process.env.PLUGGY_WEBHOOK_SECRET || '';
 const STRICT_MODE = process.env.PLUGGY_WEBHOOK_STRICT === 'true';
+const VERBOSE_MODE = process.env.PLUGGY_WEBHOOK_VERBOSE === 'true';
  
 function validarAssinatura(rawBody: string, assinatura: string): boolean {
   if (!SIGNING_SECRET || !assinatura) return false;
@@ -46,11 +49,11 @@ function validarAssinatura(rawBody: string, assinatura: string): boolean {
   }
 }
  
-// GET pra confirmar que a rota esta de pe
 export async function GET() {
   return NextResponse.json({
     status: 'webhook endpoint ativo',
-    modoDescoberta: !STRICT_MODE,
+    modoStrict: STRICT_MODE,
+    modoVerbose: VERBOSE_MODE,
     secretConfigurado: !!SIGNING_SECRET,
   });
 }
@@ -59,17 +62,17 @@ export async function POST(request: Request) {
   try {
     const rawBody = await request.text();
  
-    // ====== LOG VERBOSO: imprime TODOS os headers pra descobrirmos a assinatura ======
-    const headersRecebidos: Record<string, string> = {};
-    request.headers.forEach((valor, chave) => {
-      headersRecebidos[chave] = valor;
-    });
+    // ===== LOG VERBOSO (so se PLUGGY_WEBHOOK_VERBOSE=true) =====
+    if (VERBOSE_MODE) {
+      const headersRecebidos: Record<string, string> = {};
+      request.headers.forEach((valor, chave) => {
+        headersRecebidos[chave] = valor;
+      });
+      console.log('[webhook] Headers:', JSON.stringify(headersRecebidos));
+      console.log('[webhook] Body (500 chars):', rawBody.slice(0, 500));
+    }
  
-    console.log('[webhook] === NOVO WEBHOOK RECEBIDO ===');
-    console.log('[webhook] Headers:', JSON.stringify(headersRecebidos, null, 2));
-    console.log('[webhook] Body (primeiros 500 chars):', rawBody.slice(0, 500));
- 
-    // Procura possíveis nomes de header de assinatura (vamos descobrir qual a Pluggy usa)
+    // Procura assinatura em headers comuns
     const possiveisHeaders = [
       'x-signature',
       'x-pluggy-signature',
@@ -80,29 +83,25 @@ export async function POST(request: Request) {
     ];
     const sig =
       possiveisHeaders.map((h) => request.headers.get(h)).find((v) => v) || '';
-    console.log('[webhook] Assinatura encontrada (algum header):', sig || '(nenhuma)');
  
-    // ====== VALIDACAO (so bloqueia em strict mode) ======
+    // ===== VALIDACAO (so bloqueia em strict mode) =====
     if (SIGNING_SECRET && sig) {
       const valida = validarAssinatura(rawBody, sig);
       if (!valida) {
-        console.warn('[webhook] Assinatura INVALIDA com o secret atual');
+        console.warn('[webhook] Assinatura invalida');
         if (STRICT_MODE) {
           return NextResponse.json({ erro: 'Assinatura invalida' }, { status: 401 });
         }
-        console.log('[webhook] Continuando mesmo assim (modo descoberta)');
-      } else {
-        console.log('[webhook] Assinatura validada ✓');
       }
     } else if (STRICT_MODE) {
-      console.warn('[webhook] STRICT mode + sem secret OU sem assinatura no header');
+      console.warn('[webhook] STRICT mode + sem secret ou assinatura');
       return NextResponse.json(
         { erro: 'Webhook nao configurado ou sem assinatura' },
         { status: 401 }
       );
     }
  
-    // ====== PARSE DO PAYLOAD ======
+    // ===== PARSE =====
     let payload: {
       event?: string;
       eventType?: string;
@@ -123,8 +122,6 @@ export async function POST(request: Request) {
         ? payload.data.itemId
         : undefined);
  
-    console.log(`[webhook] Evento: ${eventType} | Item: ${itemId || 'N/A'}`);
- 
     if (!itemId) {
       return NextResponse.json({
         recebido: true,
@@ -133,7 +130,7 @@ export async function POST(request: Request) {
       });
     }
  
-    // ====== BUSCA CONEXAO ======
+    // ===== BUSCA CONEXAO =====
     const { data: conexao } = await supabase
       .from('connections')
       .select('id, user_id, pluggy_item_id, connector_name')
@@ -141,7 +138,8 @@ export async function POST(request: Request) {
       .single();
  
     if (!conexao) {
-      console.log(`[webhook] Conexao para item ${itemId} nao encontrada`);
+      // Log so quando algo nao bate (caso util de debug)
+      console.log(`[webhook] conexao nao encontrada: item=${itemId} evento=${eventType}`);
       return NextResponse.json({
         recebido: true,
         evento: eventType,
@@ -149,9 +147,9 @@ export async function POST(request: Request) {
       });
     }
  
-    // ====== PROCESSAMENTO POR TIPO DE EVENTO ======
     let acao = 'nenhuma';
  
+    // ===== SYNC EVENTS =====
     if (
       eventType === 'item/updated' ||
       eventType === 'item/created' ||
@@ -160,17 +158,13 @@ export async function POST(request: Request) {
       eventType === 'transactions/deleted'
     ) {
       acao = 'sincronizado';
-      const resultado = await sincronizarUmaConexao(conexao);
- 
-      if (resultado.totalTransacoes > 0) {
-        await supabase.from('notificacoes').insert({
-          user_id: conexao.user_id,
-          tipo: 'banco_sincronizado',
-          titulo: 'Suas transações foram atualizadas',
-          mensagem: `${resultado.totalTransacoes} transação(ões) atualizada(s) no ${conexao.connector_name || 'banco'}.`,
-        });
-      }
-    } else if (
+      await sincronizarUmaConexao(conexao);
+      // ATENCAO: webhook NAO cria notificacao "Suas transacoes foram atualizadas"
+      // pra evitar spam. Notificacao so e gerada por sync manual do usuario
+      // ou por eventos de erro/MFA abaixo.
+    }
+    // ===== ERROR EVENTS =====
+    else if (
       eventType === 'item/error' ||
       eventType === 'item/login_failed' ||
       eventType === 'item/login_error'
@@ -194,7 +188,9 @@ export async function POST(request: Request) {
         titulo: 'Problema na conexão bancária',
         mensagem: `Sua conta no ${conexao.connector_name || 'banco'} apresentou um erro. Acesse "Conectar" para reconectar.`,
       });
-    } else if (
+    }
+    // ===== MFA =====
+    else if (
       eventType === 'item/waiting_user_input' ||
       eventType === 'item/login_mfa_required'
     ) {
@@ -210,12 +206,15 @@ export async function POST(request: Request) {
         titulo: 'Reconexão bancária necessária',
         mensagem: `O ${conexao.connector_name || 'banco'} pediu uma nova confirmação. Acesse "Conectar" para revalidar.`,
       });
-    } else if (eventType === 'item/deleted') {
+    }
+    // ===== DELETED =====
+    else if (eventType === 'item/deleted') {
       acao = 'removido';
       await supabase.from('connections').delete().eq('id', conexao.id);
     }
  
-    console.log(`[webhook] Acao: ${acao}`);
+    // Log essencial (sempre)
+    console.log(`[webhook] ${eventType} item=${itemId} acao=${acao}`);
  
     return NextResponse.json({
       recebido: true,

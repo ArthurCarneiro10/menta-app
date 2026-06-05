@@ -398,13 +398,7 @@ export default function GastosPage() {
         {temFaturasAntigas && (
           <div style={{ padding: '0 16px 24px', textAlign: 'center' }}>
             <button
-              onClick={() => {
-                // hack para forcar mostrar PDFs sem mudar plano:
-                // navega pra mesma pagina com parametro - implementacao futura
-                // Por ora, leva pra um detalhe via /upload (acesso temporario)
-                // Melhor: implementar /historico em wave futura. Por ora apenas info:
-                alert('Para acessar o histórico de PDFs, desconecte o banco temporariamente em /conectar. Em breve, uma tela dedicada para o histórico.');
-              }}
+              onClick={() => router.push('/historico')}
               style={{
                 background: 'transparent',
                 border: 'none',
