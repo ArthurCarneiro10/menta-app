@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
 import { RefreshCw, Trash2, Plus } from 'lucide-react';
+import BloqueioPremium from '@/components/BloqueioPremium';
  
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const PluggyConnect = dynamic<any>(
@@ -343,9 +344,28 @@ export default function ConectarPage() {
   }
  
   if (loading) {
+    // Skeleton: replica o layout (header + botao conectar + lista de conexoes)
     return (
-      <main className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
-        <p className="text-white/60">Carregando...</p>
+      <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
+        <div className="max-w-md mx-auto pt-16">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-8">
+            <div className="h-7 w-40 rounded bg-[#183e31]/60 animate-pulse" />
+            <div className="h-10 w-10 rounded-full bg-[#183e31]/60 animate-pulse" />
+          </div>
+ 
+          {/* Botao "Conectar nova" */}
+          <div className="h-14 rounded-2xl bg-[#183e31]/60 animate-pulse mb-8" />
+ 
+          {/* Titulo "Conexoes ativas" */}
+          <div className="h-5 w-44 rounded bg-[#183e31]/60 animate-pulse mb-4" />
+ 
+          {/* Cards de conexao */}
+          <div className="space-y-3">
+            <div className="h-28 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+            <div className="h-28 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+          </div>
+        </div>
       </main>
     );
   }
@@ -353,39 +373,10 @@ export default function ConectarPage() {
   // ===== Gate Premium =====
   if (plano !== 'premium') {
     return (
-      <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
-        <div className="max-w-md mx-auto pt-16">
-          <header className="flex items-center justify-between mb-8">
-            <h1 className="text-2xl font-bold text-white">
-              Open <span className="text-[#7ad9b7]">Finance</span>
-            </h1>
-            <a
-              href="/dashboard"
-              className="text-white/70 hover:text-white text-sm font-medium border border-white/10 rounded-full px-4 py-2 no-underline"
-            >
-              Voltar
-            </a>
-          </header>
- 
-          <div className="rounded-3xl p-8 bg-white/5 border border-white/10 text-center">
-            <div className="w-16 h-16 mx-auto rounded-full grid place-items-center bg-[#7ad9b7]/20 text-[#7ad9b7] mb-4">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-white mb-2">Recurso Premium</h2>
-            <p className="text-white/60 text-sm mb-6 leading-relaxed">
-              Open Finance está disponível apenas para contas Premium. Em breve você vai poder fazer upgrade direto pelo app.
-            </p>
-            <a
-              href="/dashboard"
-              className="inline-block px-6 py-3 rounded-full text-sm font-bold bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9] transition-colors no-underline"
-            >
-              Entendi
-            </a>
-          </div>
-        </div>
-      </main>
+      <BloqueioPremium
+        titulo="Open Finance"
+        descricao="Conecte seus bancos e veja todas as transações automaticamente, com categorização inteligente por IA."
+      />
     );
   }
  

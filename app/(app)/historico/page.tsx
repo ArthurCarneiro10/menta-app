@@ -95,9 +95,34 @@ export default function HistoricoPage() {
   }
  
   if (carregando) {
+    // Skeleton: replica o cabecalho dark + lista de faturas em cards brancos
     return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: COLORS.muted }}>
-        Carregando seu histórico...
+      <div>
+        {/* Cabecalho */}
+        <div style={{ background: COLORS.dark1, padding: '48px 24px 24px', borderRadius: '0 0 28px 28px' }}>
+          <div
+            className="animate-pulse"
+            style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(255,255,255,0.1)', marginBottom: '24px' }}
+          />
+          <div
+            className="animate-pulse"
+            style={{ height: '32px', width: '70%', borderRadius: '8px', background: 'rgba(255,255,255,0.1)' }}
+          />
+        </div>
+ 
+        {/* Lista de faturas */}
+        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              style={{ background: 'white', borderRadius: '16px', padding: '16px', border: '1px solid #eef2ef' }}
+            >
+              <div className="animate-pulse" style={{ height: '16px', width: '60%', borderRadius: '4px', background: '#e6edea', marginBottom: '8px' }} />
+              <div className="animate-pulse" style={{ height: '12px', width: '35%', borderRadius: '4px', background: '#e6edea', marginBottom: '12px' }} />
+              <div className="animate-pulse" style={{ height: '20px', width: '40%', borderRadius: '6px', background: '#e6edea' }} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

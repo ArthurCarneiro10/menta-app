@@ -1,27 +1,30 @@
 /**
- * Cancela o Premium do usuario atual.
+ * Cancela o Premium do usuario.
  *
- * Comportamento (Caminho C com periodo de graca):
- *   - Marca plano = 'free' imediatamente
- *   - Marca cancelado_em = now()
- *   - Marca dados_apagar_em = now() + 30 dias
- *   - NAO apaga conexoes/contas/transacoes ainda (espera grace period)
- *   - Cria notificacao informativa
+ * Fluxo Caminho C (grace period de 30 dias):
+ *   1. Autentica usuario
+ *   2. Cancela a preapproval ativa no MP (best-effort)
+ *   3. Marca cancelamento no profile (cancelado_em + dados_apagar_em)
+ *   4. Cria notificacao informativa
+ *   5. /api/limpeza-vencidos vai limpar tudo apos 30 dias
  *
- * Na Fase 7 essa rota vai ser chamada automaticamente pelo webhook
- * do Stripe/Mercado Pago quando a assinatura for cancelada. Por ora,
- * voce chama manualmente pra testar.
+ * Dados bancarios (connections, contas, transacoes) ficam preservados
+ * durante o grace period - se o usuario reativar antes, nao perde nada.
+ *
+ * IMPORTANTE: esta rota chama tanto a logica local (lib/premium.ts) quanto
+ * o MP. Se o webhook do MP chegar primeiro (ex: o usuario cancelou pelo
+ * proprio MP), a lib/premium.ts ja vai ter marcado - eh idempotente.
  */
  
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { marcarCancelamentoPremium, DIAS_GRACE } from '@/lib/premium';
+import { cancelarPreapproval } from '@/lib/mercadopago';
  
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
- 
-const DIAS_GRACE = 30;
  
 export async function POST(request: Request) {
   try {
@@ -29,12 +32,21 @@ export async function POST(request: Request) {
     const authHeader = request.headers.get('Authorization') || '';
     const token = authHeader.replace('Bearer ', '').trim();
     if (!token) {
-      return NextResponse.json({ erro: 'Sessao invalida ou expirada.' }, { status: 401 });
+      return NextResponse.json(
+        { erro: 'Sessao invalida ou expirada.' },
+        { status: 401 }
+      );
     }
  
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser(token);
     if (authError || !user) {
-      return NextResponse.json({ erro: 'Sessao invalida ou expirada.' }, { status: 401 });
+      return NextResponse.json(
+        { erro: 'Sessao invalida ou expirada.' },
+        { status: 401 }
+      );
     }
  
     // ===== Confere se realmente esta Premium =====
@@ -51,54 +63,50 @@ export async function POST(request: Request) {
       );
     }
  
-    // ===== Calcula datas =====
-    const agora = new Date();
-    const dataApagar = new Date(agora);
-    dataApagar.setDate(dataApagar.getDate() + DIAS_GRACE);
+    // ===== Cancela no MP (best-effort) =====
+    // Busca a assinatura ativa mais recente do usuario
+    const { data: assinaturaAtiva } = await supabase
+      .from('assinaturas')
+      .select('mp_preapproval_id')
+      .eq('user_id', user.id)
+      .eq('status', 'authorized')
+      .order('criado_em', { ascending: false })
+      .limit(1)
+      .maybeSingle();
  
-    const agoraISO = agora.toISOString();
-    const dataApagarISO = dataApagar.toISOString();
- 
-    // ===== Atualiza profile =====
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update({
-        plano: 'free',
-        cancelado_em: agoraISO,
-        dados_apagar_em: dataApagarISO,
-      })
-      .eq('id', user.id);
- 
-    if (updateError) {
-      return NextResponse.json(
-        { erro: 'Falha ao cancelar: ' + updateError.message },
-        { status: 500 }
+    if (assinaturaAtiva?.mp_preapproval_id) {
+      try {
+        await cancelarPreapproval(assinaturaAtiva.mp_preapproval_id);
+        console.log(
+          `[cancelar-premium] preapproval ${assinaturaAtiva.mp_preapproval_id} cancelada no MP`
+        );
+      } catch (e) {
+        // MP pode falhar (preapproval ja cancelada, rede caiu, etc).
+        // Nao bloqueia - o estado local eh a fonte de verdade pro usuario.
+        const msg = e instanceof Error ? e.message : 'desconhecido';
+        console.warn(`[cancelar-premium] falha cancelando no MP:`, msg);
+      }
+    } else {
+      console.log(
+        `[cancelar-premium] user ${user.id} sem assinatura ativa no DB (ok)`
       );
     }
  
-    // ===== Notifica usuario =====
-    const dataLegivel = dataApagar.toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    });
- 
-    await supabase.from('notificacoes').insert({
-      user_id: user.id,
-      tipo: 'premium_cancelado',
-      titulo: 'Premium cancelado',
-      mensagem: `Você cancelou o Premium. Suas conexões bancárias e transações ficam armazenadas por ${DIAS_GRACE} dias caso queira reativar. Após ${dataLegivel}, serão apagadas automaticamente.`,
-    });
+    // ===== Aplica grace period local =====
+    const { dataApagarISO } = await marcarCancelamentoPremium(
+      user.id,
+      supabase
+    );
  
     return NextResponse.json({
       sucesso: true,
-      canceladoEm: agoraISO,
+      canceladoEm: new Date().toISOString(),
       dadosApagarEm: dataApagarISO,
       diasGrace: DIAS_GRACE,
     });
   } catch (e) {
     return NextResponse.json(
-      { erro: 'Erro: ' + (e instanceof Error ? e.message : 'desconhecido') },
+      { erro: e instanceof Error ? e.message : 'desconhecido' },
       { status: 500 }
     );
   }

@@ -173,6 +173,11 @@ export default function ConfigPage() {
   const [idade, setIdade] = useState('');
   const [fotoUrl, setFotoUrl] = useState<string | null>(null);
   const [plano, setPlano] = useState<'free' | 'premium'>('free');
+  const [assinatura, setAssinatura] = useState<{
+    plano_tipo: 'mensal' | 'anual';
+    proximo_pagamento: string | null;
+  } | null>(null);
+  const [cancelando, setCancelando] = useState(false);
   const [enviandoFoto, setEnviandoFoto] = useState(false);
   const [mensagem, setMensagem] = useState('');
   const [avisoFoto, setAvisoFoto] = useState<{ texto: string; tipo: 'erro' | 'ok' } | null>(null);
@@ -195,6 +200,25 @@ export default function ConfigPage() {
         setFotoUrl(perfil.foto_url || null);
         if (perfil.plano === 'premium') setPlano('premium');
       }
+ 
+      // Se Premium, busca a assinatura ativa pra mostrar detalhes
+      if (perfil?.plano === 'premium') {
+        const { data: ass } = await supabase
+          .from('assinaturas')
+          .select('plano_tipo, proximo_pagamento')
+          .eq('user_id', user.id)
+          .eq('status', 'authorized')
+          .order('criado_em', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (ass) {
+          setAssinatura({
+            plano_tipo: ass.plano_tipo,
+            proximo_pagamento: ass.proximo_pagamento,
+          });
+        }
+      }
+ 
       setLoading(false);
     }
     init();
@@ -252,6 +276,39 @@ export default function ConfigPage() {
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push('/login');
+  }
+ 
+  async function handleCancelarPremium() {
+    const ok = confirm(
+      'Tem certeza que deseja cancelar o Premium? Suas conexões bancárias e transações ficam armazenadas por 30 dias caso queira reativar.'
+    );
+    if (!ok) return;
+ 
+    setCancelando(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+ 
+      const r = await fetch('/api/cancelar-premium', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + session.access_token },
+      });
+      const data = await r.json();
+ 
+      if (data.sucesso) {
+        // Recarrega pra refletir estado Free
+        window.location.reload();
+      } else {
+        alert('Erro: ' + (data.erro || 'desconhecido'));
+        setCancelando(false);
+      }
+    } catch {
+      alert('Erro de conexao ao cancelar');
+      setCancelando(false);
+    }
   }
  
   const inicial = (nome || email || '?').trim().charAt(0).toUpperCase();
@@ -365,25 +422,6 @@ export default function ConfigPage() {
                 {email}
               </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-widest mb-2 text-white/50">
-                Plano
-              </label>
-              <div className="w-full px-4 py-3 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-between">
-                <span className="text-white font-medium">
-                  {plano === 'premium' ? 'Premium' : 'Free'}
-                </span>
-                {plano === 'premium' ? (
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
-                    Ativo
-                  </span>
-                ) : (
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-white/5 text-white/40 border border-white/10">
-                    Upgrade em breve
-                  </span>
-                )}
-              </div>
-            </div>
             <button
               onClick={handleSalvar}
               disabled={salvando}
@@ -395,6 +433,81 @@ export default function ConfigPage() {
               <p className="text-center text-sm text-[#7ad9b7]">{mensagem}</p>
             )}
           </div>
+        </Secao>
+ 
+        {/* PLANO */}
+        <Secao titulo="Plano">
+          {plano === 'premium' ? (
+            <div className="px-4 py-4 space-y-3">
+              <div className="rounded-2xl p-4 bg-[#7ad9b7]/10 border border-[#7ad9b7]/30">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#7cdbb9]">
+                      Plano atual
+                    </p>
+                    <p className="text-lg font-bold text-white mt-1">
+                      Menta Premium
+                      {assinatura && (
+                        <span className="text-white/60 font-normal text-sm ml-2">
+                          · {assinatura.plano_tipo === 'anual' ? 'Anual' : 'Mensal'}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
+                    Ativo
+                  </span>
+                </div>
+                {assinatura?.proximo_pagamento && (
+                  <p className="text-white/60 text-xs">
+                    Próxima cobrança:{' '}
+                    {new Date(assinatura.proximo_pagamento).toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={handleCancelarPremium}
+                disabled={cancelando}
+                className="w-full px-6 py-3 rounded-full text-sm font-medium border border-white/15 text-white/70 hover:bg-white/5 hover:text-white transition-colors disabled:opacity-50"
+              >
+                {cancelando ? 'Cancelando...' : 'Cancelar Premium'}
+              </button>
+              <p className="text-white/40 text-[11px] text-center leading-relaxed">
+                Ao cancelar, suas conexões bancárias e transações ficam armazenadas por 30 dias caso queira reativar.
+              </p>
+            </div>
+          ) : (
+            <div className="px-4 py-4">
+              <div className="rounded-2xl p-5 bg-[#7ad9b7]/10 border border-[#7ad9b7]/30">
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-full grid place-items-center bg-[#7ad9b7]/20 text-[#7ad9b7] flex-shrink-0">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-bold text-white">Faça upgrade pra Premium</h3>
+                    <p className="text-white/60 text-sm mt-1 leading-relaxed">
+                      Conecte seus bancos com Open Finance, sincronização automática e IA avançada.
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href="/planos"
+                  className="block w-full px-6 py-3 rounded-full text-sm font-bold bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9] transition-colors no-underline text-center"
+                >
+                  Ver planos
+                </a>
+                <p className="text-white/50 text-xs text-center mt-3">
+                  A partir de R$ 29,90/mês · 7 dias grátis
+                </p>
+              </div>
+            </div>
+          )}
         </Secao>
  
         {/* CONTA E SEGURANCA */}

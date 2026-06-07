@@ -155,9 +155,40 @@ export default function DashboardPage() {
   }, [router]);
  
   if (loading) {
+    // Skeleton: replica grosseiramente o layout (header + cards + lista de categorias)
+    // pra que a transicao pro conteudo real seja suave, sem reflow.
     return (
-      <main className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
-        <p className="text-white/60">Carregando...</p>
+      <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
+        <div className="max-w-md mx-auto px-6 pt-12 pb-32">
+          {/* Header */}
+          <div className="flex items-start justify-between mb-8">
+            <div className="space-y-2">
+              <div className="h-3 w-20 rounded bg-[#183e31]/60 animate-pulse" />
+              <div className="h-7 w-48 rounded bg-[#183e31]/60 animate-pulse" />
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-28 rounded-full bg-[#183e31]/60 animate-pulse" />
+              <div className="h-10 w-10 rounded-full bg-[#183e31]/60 animate-pulse" />
+            </div>
+          </div>
+ 
+          {/* Cards do topo (saldo + gasto ou total + insight) */}
+          <div className="grid sm:grid-cols-2 gap-3 mb-8">
+            <div className="h-28 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+            <div className="h-28 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+          </div>
+ 
+          {/* Titulo da secao */}
+          <div className="h-5 w-48 rounded bg-[#183e31]/60 animate-pulse mb-4" />
+ 
+          {/* Lista de categorias */}
+          <div className="space-y-3">
+            <div className="h-16 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+            <div className="h-16 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+            <div className="h-16 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+            <div className="h-16 rounded-2xl bg-[#183e31]/60 animate-pulse" />
+          </div>
+        </div>
       </main>
     );
   }

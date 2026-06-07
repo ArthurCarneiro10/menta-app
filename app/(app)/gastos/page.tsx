@@ -197,9 +197,57 @@ export default function GastosPage() {
   }
  
   if (carregando) {
+    // Skeleton: replica o cabecalho dark + corpo branco com filtros e lista
     return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: COLORS.muted }}>
-        Carregando seus gastos...
+      <div>
+        {/* Cabecalho */}
+        <div style={{ background: COLORS.dark1, padding: '48px 24px 24px', borderRadius: '0 0 28px 28px' }}>
+          <div
+            className="animate-pulse"
+            style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(255,255,255,0.1)', marginBottom: '24px' }}
+          />
+          <div
+            className="animate-pulse"
+            style={{ height: '32px', width: '60%', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', marginBottom: '24px' }}
+          />
+          <div style={{ background: 'white', borderRadius: '16px', padding: '16px', border: '1px solid #eef2ef' }}>
+            <div
+              className="animate-pulse"
+              style={{ height: '14px', width: '40%', borderRadius: '4px', background: '#e6edea', marginBottom: '8px' }}
+            />
+            <div
+              className="animate-pulse"
+              style={{ height: '24px', width: '60%', borderRadius: '6px', background: '#e6edea' }}
+            />
+          </div>
+        </div>
+ 
+        {/* Corpo */}
+        <div style={{ padding: '24px' }}>
+          {/* Filtros chips */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
+            <div className="animate-pulse" style={{ height: '36px', width: '80px', borderRadius: '999px', background: '#e6edea' }} />
+            <div className="animate-pulse" style={{ height: '36px', width: '100px', borderRadius: '999px', background: '#e6edea' }} />
+            <div className="animate-pulse" style={{ height: '36px', width: '90px', borderRadius: '999px', background: '#e6edea' }} />
+          </div>
+ 
+          {/* Lista de transacoes */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div
+                key={i}
+                style={{ background: 'white', borderRadius: '16px', padding: '12px', border: '1px solid #eef2ef', display: 'flex', alignItems: 'center', gap: '12px' }}
+              >
+                <div className="animate-pulse" style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#e6edea', flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div className="animate-pulse" style={{ height: '14px', width: '70%', borderRadius: '4px', background: '#e6edea', marginBottom: '6px' }} />
+                  <div className="animate-pulse" style={{ height: '11px', width: '40%', borderRadius: '4px', background: '#e6edea' }} />
+                </div>
+                <div className="animate-pulse" style={{ height: '18px', width: '70px', borderRadius: '4px', background: '#e6edea' }} />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -330,9 +378,21 @@ export default function GastosPage() {
           </h2>
  
           {carregandoTxs ? (
-            <p style={{ color: COLORS.muted, fontSize: '13px', textAlign: 'center', padding: '24px' }}>
-              Carregando...
-            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  style={{ background: 'white', borderRadius: '16px', padding: '12px', border: '1px solid #eef2ef', display: 'flex', alignItems: 'center', gap: '12px' }}
+                >
+                  <div className="animate-pulse" style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#e6edea', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div className="animate-pulse" style={{ height: '14px', width: '70%', borderRadius: '4px', background: '#e6edea', marginBottom: '6px' }} />
+                    <div className="animate-pulse" style={{ height: '11px', width: '40%', borderRadius: '4px', background: '#e6edea' }} />
+                  </div>
+                  <div className="animate-pulse" style={{ height: '18px', width: '70px', borderRadius: '4px', background: '#e6edea' }} />
+                </div>
+              ))}
+            </div>
           ) : txsFiltradas.length === 0 ? (
             <div style={{ background: 'white', borderRadius: '16px', padding: '24px', textAlign: 'center', border: '1px solid #eef2ef' }}>
               <p style={{ color: COLORS.ink, fontWeight: 600, margin: 0 }}>Nenhuma movimentação nesse período</p>
@@ -398,7 +458,13 @@ export default function GastosPage() {
         {temFaturasAntigas && (
           <div style={{ padding: '0 16px 24px', textAlign: 'center' }}>
             <button
-              onClick={() => router.push('/historico')}
+              onClick={() => {
+                // hack para forcar mostrar PDFs sem mudar plano:
+                // navega pra mesma pagina com parametro - implementacao futura
+                // Por ora, leva pra um detalhe via /upload (acesso temporario)
+                // Melhor: implementar /historico em wave futura. Por ora apenas info:
+                alert('Para acessar o histórico de PDFs, desconecte o banco temporariamente em /conectar. Em breve, uma tela dedicada para o histórico.');
+              }}
               style={{
                 background: 'transparent',
                 border: 'none',
