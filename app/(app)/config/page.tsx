@@ -525,9 +525,9 @@ export default function ConfigPage() {
         {/* SOBRE */}
         <Secao titulo="Sobre">
           <Row icon="info" label="Versão 1.0.0" />
-          <Row icon="doc" label="Termos de uso" emBreve />
-          <Row icon="shield" label="Política de privacidade" emBreve />
-          <Row icon="mail" label="Suporte e contato" emBreve />
+          <Row icon="doc" label="Termos de uso" onClick={() => router.push('/termos')} />
+          <Row icon="shield" label="Política de privacidade" onClick={() => router.push('/privacidade')} />
+          <Row icon="mail" label="Suporte e contato" onClick={() => router.push('/suporte')} />
         </Secao>
  
         {/* ZONA DE PERIGO */}
