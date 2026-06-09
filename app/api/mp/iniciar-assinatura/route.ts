@@ -3,13 +3,14 @@
  *
  * 1. Autentica usuario via JWT
  * 2. Verifica se nao eh Premium (nao deixa duplicar)
- * 3. Cria uma preapproval no MP com status 'pending' (sem cartao definido ainda)
- * 4. Salva no DB como pending
- * 5. Retorna init_point - frontend redireciona pra essa URL
+ * 3. PREVENCAO: cancela pending antigas pra nao empilhar (anti cobranca dupla)
+ * 4. Cria uma preapproval no MP com status 'pending' (sem cartao definido ainda)
+ * 5. Salva no DB como pending
+ * 6. Retorna init_point - frontend redireciona pra essa URL
  *
  * O usuario vai pro checkout do MP, cadastra cartao, e aprova. Quando isso
  * acontece, MP dispara webhook pra /api/mp/webhook que entao marca o usuario
- * como Premium.
+ * como Premium (e cura quaisquer duplicadas remanescentes).
  *
  * Body: { plano: 'mensal' | 'anual' }
  * Header: Authorization: Bearer <jwt>
@@ -18,6 +19,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { criarPreapproval, PRECOS, TRIAL_DIAS } from '@/lib/mercadopago';
+import { cancelarAssinaturasVivas } from '@/lib/assinaturas';
  
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -70,6 +72,23 @@ export async function POST(request: Request) {
         { erro: 'NEXT_PUBLIC_APP_URL nao configurado' },
         { status: 500 }
       );
+    }
+ 
+    // ===== PREVENCAO: limpa pending antigas =====
+    // Se o usuario clicou "assinar" varias vezes sem concluir, ele tem
+    // preapprovals 'pending' empilhadas no MP. Cancelamos todas antes de
+    // criar a nova, garantindo uma tentativa aberta por vez.
+    // A cura definitiva contra cobranca dupla esta no webhook (ao autorizar).
+    // Tolerante a falha: se nao der pra limpar, segue mesmo assim.
+    try {
+      const limpas = await cancelarAssinaturasVivas(user.id, supabase, {
+        statuses: ['pending'],
+      });
+      if (limpas > 0) {
+        console.log(`[iniciar-assinatura] ${limpas} pending antiga(s) cancelada(s)`);
+      }
+    } catch (e) {
+      console.error('[iniciar-assinatura] erro limpando pending antigas:', e);
     }
  
     // ===== Body =====

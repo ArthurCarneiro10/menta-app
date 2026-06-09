@@ -7,6 +7,7 @@
  * Docs oficiais:
  * - Plano: https://www.mercadopago.com.br/developers/en/reference/subscriptions/_preapproval_plan/post
  * - Assinatura: https://www.mercadopago.com.br/developers/en/reference/subscriptions/_preapproval/post
+ * - Authorized payment: https://www.mercadopago.com.br/developers/en/reference/subscriptions/_authorized_payments_id/get
  */
  
 const MP_API_BASE = 'https://api.mercadopago.com';
@@ -100,6 +101,28 @@ export type MPPreapprovalResponse = {
   auto_recurring: MPAutoRecurring;
 };
  
+/**
+ * Resposta do endpoint /authorized_payments/{id}.
+ *
+ * Este recurso representa UMA cobranca recorrente (ex: a mensalidade do
+ * mes). O campo que importa pra nos eh o preapproval_id, que liga essa
+ * cobranca de volta a assinatura. Tipado de forma defensiva porque o MP
+ * pode trazer campos a mais/a menos dependendo do estado.
+ */
+export type MPAuthorizedPaymentResponse = {
+  id: number;
+  preapproval_id?: string;
+  type?: string;
+  status?: string;
+  date_created?: string;
+  transaction_amount?: number;
+  payment?: {
+    id?: number;
+    status?: string;
+    status_detail?: string;
+  };
+};
+ 
 // =========================================================================
 // Cliente HTTP
 // =========================================================================
@@ -173,6 +196,19 @@ export async function cancelarPreapproval(id: string): Promise<MPPreapprovalResp
     method: 'PUT',
     body: { status: 'cancelled' },
   });
+}
+ 
+/**
+ * Consulta uma cobranca recorrente (authorized payment) pelo id.
+ *
+ * Usado pelo webhook quando chega o evento subscription_authorized_payment:
+ * o data.id desse evento eh o id da cobranca, NAO da preapproval. Pegamos
+ * o preapproval_id daqui pra ressincronizar a assinatura.
+ */
+export async function getAuthorizedPayment(
+  id: string
+): Promise<MPAuthorizedPaymentResponse> {
+  return mpFetch<MPAuthorizedPaymentResponse>(`/authorized_payments/${id}`);
 }
  
 // =========================================================================

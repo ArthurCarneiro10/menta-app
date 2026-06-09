@@ -3,11 +3,18 @@
  *
  * Recebe eventos sobre preapprovals (assinaturas) e pagamentos recorrentes.
  * Para cada evento relevante, consulta o estado atual no MP e sincroniza
- * o DB local (tabelas assinaturas + profiles).
+ * o DB local (tabelas assinaturas + profiles). A tabela assinaturas eh
+ * tratada como espelho fiel do MP.
  *
  * Eventos tratados:
- *   - subscription_preapproval (criada/autorizada/cancelada)
+ *   - subscription_preapproval (criada/autorizada/pausada/cancelada)
  *   - subscription_authorized_payment (cobranca recorrente processada)
+ *
+ * Garantias de robustez:
+ *   - Ao autorizar uma assinatura, CURA duplicadas: cancela no MP + local
+ *     qualquer outra viva do mesmo usuario (anti cobranca dupla).
+ *   - paused (cartao falhou) aplica grace de 30 dias com notificacao propria.
+ *   - Recuperacao automatica: paused -> authorized zera as flags via ativarPremium.
  *
  * IMPORTANTE: MP nao consegue chamar localhost. Pra testar este endpoint
  * voce precisa ter o app deployado em URL HTTPS publica (Vercel).
@@ -21,8 +28,13 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import { getPreapproval } from '@/lib/mercadopago';
-import { ativarPremium, marcarCancelamentoPremium } from '@/lib/premium';
+import { getPreapproval, getAuthorizedPayment } from '@/lib/mercadopago';
+import {
+  ativarPremium,
+  marcarCancelamentoPremium,
+  marcarPausaPremium,
+} from '@/lib/premium';
+import { cancelarAssinaturasVivas } from '@/lib/assinaturas';
  
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -102,8 +114,7 @@ export async function POST(request: Request) {
     ) {
       await processarPreapproval(resourceId);
     } else if (eventType === 'subscription_authorized_payment') {
-      console.log('[mp-webhook] cobranca recorrente processada');
-      // Por enquanto so loga. Futuramente: atualizar proximo_pagamento
+      await processarAuthorizedPayment(resourceId);
     } else {
       console.log(`[mp-webhook] tipo nao tratado: ${eventType}`);
     }
@@ -218,7 +229,7 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
     `[mp-webhook] preapproval=${preapprovalId} user=${userId} status=${preapproval.status} plano=${planoTipo}`
   );
  
-  // ===== Upsert na tabela assinaturas =====
+  // ===== Upsert na tabela assinaturas (espelho do MP) =====
   const { error: upsertError } = await supabase
     .from('assinaturas')
     .upsert(
@@ -242,6 +253,19 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
   if (preapproval.status === 'authorized') {
     await ativarPremium(userId, supabase);
     console.log(`[mp-webhook] user ${userId} virou Premium`);
+ 
+    // CURA: cancela qualquer outra assinatura viva do user (anti cobranca dupla).
+    // Preserva a atual via `exceto`. Tolerante a falha.
+    try {
+      const curadas = await cancelarAssinaturasVivas(userId, supabase, {
+        exceto: preapproval.id,
+      });
+      if (curadas > 0) {
+        console.log(`[mp-webhook] cura: ${curadas} assinatura(s) duplicada(s) cancelada(s)`);
+      }
+    } catch (e) {
+      console.error('[mp-webhook] erro na cura de duplicadas:', e);
+    }
   } else if (preapproval.status === 'cancelled') {
     // So aplica grace period se ainda nao foi aplicado (evita re-cancelar
     // se o webhook chegar duplicado)
@@ -258,11 +282,49 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
       console.log(`[mp-webhook] user ${userId} ja estava cancelado, sem dupla acao`);
     }
   } else if (preapproval.status === 'paused') {
-    console.log(`[mp-webhook] user ${userId} pausado (pagamento pendente)`);
-    // Por ora nao mudamos o plano. Em Wave futura podemos notificar usuario.
+    // Cobranca recorrente falhou (cartao recusado). Aplica grace de 30 dias
+    // com notificacao propria. Mesma guarda anti-duplicado do cancelamento.
+    const { data: perfil } = await supabase
+      .from('profiles')
+      .select('plano, cancelado_em')
+      .eq('id', userId)
+      .single();
+ 
+    if (perfil?.plano === 'premium' || !perfil?.cancelado_em) {
+      await marcarPausaPremium(userId, supabase);
+      console.log(`[mp-webhook] user ${userId} pausado (pagamento falhou), grace iniciado`);
+    } else {
+      console.log(`[mp-webhook] user ${userId} ja em estado de grace, sem dupla acao`);
+    }
   } else if (preapproval.status === 'pending') {
     console.log(`[mp-webhook] user ${userId} ainda pending (cadastrando cartao)`);
   }
+}
+ 
+/**
+ * Processa o evento subscription_authorized_payment (cobranca recorrente).
+ *
+ * O data.id desse evento eh o id da COBRANCA, nao da preapproval. Buscamos
+ * o authorized_payment pra descobrir o preapproval_id e dai ressincronizamos
+ * a assinatura inteira (status + proximo_pagamento) reusando processarPreapproval.
+ */
+async function processarAuthorizedPayment(authorizedPaymentId: string): Promise<void> {
+  const ap = await getAuthorizedPayment(authorizedPaymentId);
+ 
+  if (!ap.preapproval_id) {
+    console.warn(
+      `[mp-webhook] authorized_payment ${authorizedPaymentId} sem preapproval_id - ignorado`
+    );
+    return;
+  }
+ 
+  console.log(
+    `[mp-webhook] cobranca recorrente (payment=${authorizedPaymentId} status=${ap.payment?.status || ap.status || '?'}) -> ressincronizando preapproval ${ap.preapproval_id}`
+  );
+ 
+  // Reusa todo o fluxo de sincronizacao: vai reconsultar o MP, atualizar
+  // status + proximo_pagamento, e reativar Premium se preciso.
+  await processarPreapproval(ap.preapproval_id);
 }
  
 // GET pra status/debug
