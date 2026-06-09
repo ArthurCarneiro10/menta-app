@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     const body = {
       from,
       to: email,
-      subject: '🌱 Bem-vindo ao Menta!',
+      subject: 'Bem-vindo ao Menta!',
       html: htmlEmail(nomeAmigavel),
     };
  
@@ -100,10 +100,11 @@ function htmlEmail(nome: string): string {
           <!-- Header dark -->
           <tr>
             <td style="background:linear-gradient(135deg,#0c2019,#183e31);padding:40px 32px;text-align:center;">
-              <h1 style="margin:0;font-size:32px;color:#ffffff;letter-spacing:-0.02em;">
-                Menta<span style="color:#7ad9b7;">.</span>
-              </h1>
-              <p style="margin:8px 0 0;color:rgba(255,255,255,0.6);font-size:14px;">
+              <img src="https://app.mentaapp.com.br/menta-logo-completa.png"
+                   alt="Menta"
+                   width="220"
+                   style="display:inline-block;max-width:220px;height:auto;border:0;outline:none;">
+              <p style="margin:12px 0 0;color:rgba(255,255,255,0.6);font-size:14px;">
                 Seu dinheiro, no piloto automático
               </p>
             </td>
@@ -113,7 +114,7 @@ function htmlEmail(nome: string): string {
           <tr>
             <td style="padding:40px 32px;color:#1f2e26;line-height:1.6;">
               <h2 style="margin:0 0 16px;font-size:22px;color:#1f2e26;">
-                Bem-vindo, ${escape(nome)}! 🌱
+                Bem-vindo, ${escape(nome)}!
               </h2>
  
               <p style="margin:0 0 24px;color:#4a5d54;">

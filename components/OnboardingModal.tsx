@@ -19,14 +19,15 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
  
 type Slide = {
-  emoji: string;
+  emoji?: string;
+  imagem?: string;
   titulo: string;
   texto: string;
 };
  
 const SLIDES: Slide[] = [
   {
-    emoji: '🌱',
+    imagem: '/menta-logo.png',
     titulo: 'Bem-vindo ao Menta',
     texto:
       'Em 30 segundos, te conto como o app vai te ajudar a manter a vida financeira em ordem — sem planilha, sem dor de cabeça.',
@@ -148,7 +149,17 @@ export default function OnboardingModal() {
  
         {/* Slide */}
         <div className="text-center mb-8">
-          <div className="text-6xl mb-6">{slide.emoji}</div>
+          {slide.imagem ? (
+            <div className="flex justify-center mb-6">
+              <img
+                src={slide.imagem}
+                alt="Menta"
+                className="h-24 w-auto object-contain"
+              />
+            </div>
+          ) : (
+            <div className="text-6xl mb-6">{slide.emoji}</div>
+          )}
           <h2 className="text-2xl font-bold text-white mb-4 tracking-tight">
             {slide.titulo}
           </h2>
