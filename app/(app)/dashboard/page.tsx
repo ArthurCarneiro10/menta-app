@@ -229,10 +229,12 @@ export default function DashboardPage() {
               </svg>
             </a>
             <div>
-              <p className="text-xs tracking-widest uppercase font-semibold text-[#7cdbb9]">
-                Bem-vindo
-              </p>
-              <h1 className="text-2xl font-bold text-white mt-1">
+              <img
+                src="/menta-logo.png"
+                alt="Menta"
+                className="h-5 w-auto object-contain opacity-70 mb-1.5"
+              />
+              <h1 className="text-2xl font-bold text-white">
                 Oi, <span className="text-[#7ad9b7]">{nome}</span>
               </h1>
             </div>

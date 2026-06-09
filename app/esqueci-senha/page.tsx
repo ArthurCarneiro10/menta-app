@@ -58,9 +58,11 @@ export default function EsqueciSenhaPage() {
     <main className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white tracking-tight mb-2">
-            Menta <span className="text-[#7ad9b7]">App</span>
-          </h1>
+          <img
+            src="/menta-logo-completa.png"
+            alt="Menta"
+            className="h-14 w-auto object-contain mx-auto mb-3"
+          />
           <p className="text-white/60">Esqueceu sua senha?</p>
         </div>
  

@@ -518,7 +518,6 @@ export default function ConfigPage() {
  
         {/* PREFERENCIAS */}
         <Secao titulo="Preferências">
-          <Row icon="bell" label="Notificações" emBreve />
           <Row icon="theme" label="Tema (claro / escuro)" emBreve />
         </Secao>
  

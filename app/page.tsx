@@ -47,14 +47,11 @@ export default function Home() {
   if (loading) {
     return (
       <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] flex items-center justify-center">
-        <div className="text-center">
-          <p
-            className="text-3xl font-bold text-white"
-            style={{ letterSpacing: '-0.02em' }}
-          >
-            Menta<span className="text-[#7ad9b7]">.</span>
-          </p>
-        </div>
+        <img
+          src="/menta-logo-completa.png"
+          alt="Menta"
+          className="h-12 w-auto object-contain opacity-80"
+        />
       </main>
     );
   }
@@ -68,17 +65,16 @@ export default function Home() {
           {/* Logo */}
           <div className="text-center mb-10">
             <p
-              className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#7cdbb9] mb-3"
+              className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#7cdbb9] mb-6"
             >
               Bem-vindo
             </p>
-            <h1
-              className="text-5xl sm:text-6xl font-bold text-white tracking-tight"
-              style={{ letterSpacing: '-0.03em' }}
-            >
-              Menta<span className="text-[#7ad9b7]">.</span>
-            </h1>
-            <p className="text-white/60 text-base mt-4 leading-relaxed">
+            <img
+              src="/menta-logo-completa.png"
+              alt="Menta"
+              className="h-20 sm:h-24 w-auto object-contain mx-auto"
+            />
+            <p className="text-white/60 text-base mt-6 leading-relaxed">
               Seu dinheiro, no piloto automático.
             </p>
           </div>

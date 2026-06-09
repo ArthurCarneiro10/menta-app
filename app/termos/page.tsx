@@ -23,15 +23,22 @@ export default function TermosPage() {
       <div className="max-w-2xl mx-auto px-6 py-12 pb-32">
  
         <header className="mb-10">
-          <a
-            href="/"
-            className="inline-flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 transition-colors no-underline mb-6"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-            Voltar
-          </a>
+          <div className="flex items-center justify-between mb-6">
+            <a
+              href="/"
+              className="inline-flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 transition-colors no-underline"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              Voltar
+            </a>
+            <img
+              src="/menta-logo.png"
+              alt="Menta"
+              className="h-8 w-auto object-contain opacity-60"
+            />
+          </div>
           <h1 className="text-3xl font-bold text-white mb-3 tracking-tight">
             Termos de Uso
           </h1>
