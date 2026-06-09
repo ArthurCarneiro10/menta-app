@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
 import SinoNotificacoes from '@/components/SinoNotificacoes';
+import OnboardingModal from '@/components/OnboardingModal';
  
 const CORES = ['#7ad9b7', '#7cdbb9', '#3d7d66', '#407c66', '#5a9e82', '#2d5f4d'];
  
@@ -211,6 +212,7 @@ export default function DashboardPage() {
  
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-16">
+      <OnboardingModal />
       <div className="max-w-2xl mx-auto px-5">
  
         <header className="flex items-center justify-between pt-10 pb-6">

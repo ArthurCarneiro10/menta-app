@@ -45,6 +45,14 @@ export default function SignupPage() {
       return;
     }
  
+    // Dispara email de boas-vindas em background (nao bloqueia o usuario).
+    // Se a API falhar, signup continua normalmente.
+    fetch('/api/email/boas-vindas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, nome: email.split('@')[0] }),
+    }).catch((err) => console.warn('[signup] falha ao enviar boas-vindas:', err));
+ 
     setAvisoMsg('Conta criada! Verifique seu email para confirmar.', 'ok');
     setLoading(false);
     setTimeout(() => router.push('/login'), 2000);
