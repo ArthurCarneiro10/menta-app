@@ -4,15 +4,23 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
+import { LIMITE_ANALISES_FREE, contarAnalisesFeitas } from '@/lib/limites';
  
 type Analise = { total: number; categorias: { nome: string; valor: number }[]; insight: string };
 type Aviso = { texto: string; tipo: 'erro' | 'ok' } | null;
+ 
+// Teto de tamanho do PDF no cliente (espelha o limite do servidor).
+const MAX_PDF_MB = 10;
+const MAX_PDF_BYTES = MAX_PDF_MB * 1024 * 1024;
  
 function erroAmigavel(tecnico: string): string {
   const t = (tecnico || '').toLowerCase();
  
   if (t.includes('sessao') || t.includes('expirada') || t.includes('autoriz') || t.includes('login')) {
     return 'Sua sessao expirou. Saia e entre de novo para continuar.';
+  }
+  if (t.includes('muito grande') || t.includes('10 mb') || t.includes('413')) {
+    return `O arquivo e muito grande. Envie um PDF de ate ${MAX_PDF_MB} MB.`;
   }
   if (t.includes('nao pertence') || t.includes('sua conta')) {
     return 'Essa fatura nao esta disponivel na sua conta.';
@@ -53,6 +61,14 @@ export default function UploadPage() {
   const [faturaId, setFaturaId] = useState('');
   const [analisando, setAnalisando] = useState(false);
   const [analise, setAnalise] = useState<Analise | null>(null);
+  const [truncado, setTruncado] = useState(false);
+ 
+  // Contagem vitalicia de analises (so importa pro Free)
+  const [analisesFeitas, setAnalisesFeitas] = useState(0);
+  const [limiteAtingido, setLimiteAtingido] = useState(false);
+ 
+  const ehFree = plano === 'free';
+  const restantes = Math.max(0, LIMITE_ANALISES_FREE - analisesFeitas);
  
   function mostraErro(texto: string) { setAviso({ texto, tipo: 'erro' }); }
   function mostraOk(texto: string) { setAviso({ texto, tipo: 'ok' }); }
@@ -67,8 +83,13 @@ export default function UploadPage() {
       setUserId(user.id);
  
       const perfil = await getOuCriaPerfil(user.id);
-      if (perfil?.plano === 'premium') {
+      const ehPremium = perfil?.plano === 'premium';
+      if (ehPremium) {
         setPlano('premium');
+      } else {
+        // Free: carrega quantas analises ja foram feitas (vitalicio)
+        const feitas = await contarAnalisesFeitas(user.id, supabase);
+        setAnalisesFeitas(feitas);
       }
       setLoading(false);
     }
@@ -83,9 +104,15 @@ export default function UploadPage() {
       setFile(null);
       return;
     }
+    if (selected.size > MAX_PDF_BYTES) {
+      mostraErro(`Esse arquivo tem mais de ${MAX_PDF_MB} MB. Envie um PDF menor (uma fatura normal costuma ter poucos MB).`);
+      setFile(null);
+      return;
+    }
     setFile(selected);
     setAviso(null);
     setAnalise(null);
+    setTruncado(false);
     setFaturaId('');
   }
  
@@ -97,6 +124,7 @@ export default function UploadPage() {
     setUploading(true);
     setAviso(null);
     setAnalise(null);
+    setTruncado(false);
  
     const timestamp = Date.now();
     const path = `${userId}/${timestamp}-${file.name}`;
@@ -132,6 +160,7 @@ export default function UploadPage() {
   async function handleAnalisar() {
     setAnalisando(true);
     setAviso(null);
+    setTruncado(false);
  
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -154,13 +183,26 @@ export default function UploadPage() {
       const dados = await resp.json();
  
       if (!dados.sucesso) {
+        // Limite do Free atingido: mostra upsell em vez de erro generico
+        if (dados.limite_atingido) {
+          setLimiteAtingido(true);
+          setAnalisando(false);
+          return;
+        }
         mostraErro(erroAmigavel(dados.erro || ''));
         setAnalisando(false);
         return;
       }
  
       setAnalise(dados.analise);
+      setTruncado(!!dados.truncado);
       setAviso(null);
+ 
+      // Atualiza o contador (Free) reconsultando - reflete a analise recem-feita
+      if (ehFree) {
+        const feitas = await contarAnalisesFeitas(userId, supabase);
+        setAnalisesFeitas(feitas);
+      }
     } catch {
       mostraErro('A conexao falhou no meio do caminho. Verifique sua internet e tente de novo.');
     }
@@ -187,7 +229,7 @@ export default function UploadPage() {
           </a>
         </header>
  
-        {/* Banner para usuarios Free - upsell */}
+        {/* Banner para usuarios Free - upsell + contador de analises */}
         {plano === 'free' && (
           <div className="rounded-2xl p-4 mb-6 bg-[#7ad9b7]/10 border border-[#7ad9b7]/25 flex items-start gap-3">
             <div className="w-10 h-10 rounded-full grid place-items-center shrink-0 bg-[#7ad9b7]/20 text-[#7ad9b7]">
@@ -205,6 +247,12 @@ export default function UploadPage() {
               <p className="text-white/60 text-xs leading-relaxed">
                 Conecte sua conta bancaria direto e a Menta atualiza tudo sozinha, sem voce precisar mandar nada.{' '}
                 <span className="text-white/40">Em breve.</span>
+              </p>
+              <p className="text-white/50 text-xs mt-2">
+                Analises gratuitas:{' '}
+                <span className={restantes === 0 ? 'text-red-300 font-semibold' : 'text-[#7ad9b7] font-semibold'}>
+                  {analisesFeitas} de {LIMITE_ANALISES_FREE} usadas
+                </span>
               </p>
             </div>
           </div>
@@ -232,7 +280,7 @@ export default function UploadPage() {
                 onClick={() => router.push('/conectar')}
                 className="text-[#7ad9b7] font-semibold text-xs hover:underline"
               >
-                Conectar agora →
+                Conectar agora &rarr;
               </button>
             </div>
           </div>
@@ -244,36 +292,55 @@ export default function UploadPage() {
             Envie o PDF da fatura do seu cartao para a Menta analisar.
           </p>
  
-          <label className="block border-2 border-dashed border-white/20 rounded-xl p-10 text-center cursor-pointer hover:border-[#7ad9b7]/50 transition-colors">
-            <input type="file" accept="application/pdf" onChange={handleFileChange} className="hidden" />
-            <div className="text-white/60">
-              {file ? (
-                <p className="text-[#7ad9b7] font-semibold">{file.name}</p>
-              ) : (
-                <div>
-                  <p className="text-lg font-medium text-white/80 mb-1">Clique para selecionar</p>
-                  <p className="text-sm">apenas arquivos PDF</p>
-                </div>
-              )}
+          {/* Bloqueio de limite (Free): substitui o fluxo de envio por upsell */}
+          {limiteAtingido ? (
+            <div className="rounded-xl p-6 bg-[#7ad9b7]/10 border border-[#7ad9b7]/30 text-center">
+              <p className="text-white font-bold text-lg mb-1">Você atingiu o limite gratuito</p>
+              <p className="text-white/60 text-sm mb-5">
+                Você usou suas {LIMITE_ANALISES_FREE} análises gratuitas. Assine o Premium para análises
+                ilimitadas e conexão automática com o banco.
+              </p>
+              <button
+                onClick={() => router.push('/planos')}
+                className="w-full py-3 bg-[#7ad9b7] text-[#010302] font-bold rounded-lg hover:bg-[#7cdbb9] transition-colors"
+              >
+                Ver planos Premium
+              </button>
             </div>
-          </label>
+          ) : (
+            <>
+              <label className="block border-2 border-dashed border-white/20 rounded-xl p-10 text-center cursor-pointer hover:border-[#7ad9b7]/50 transition-colors">
+                <input type="file" accept="application/pdf" onChange={handleFileChange} className="hidden" />
+                <div className="text-white/60">
+                  {file ? (
+                    <p className="text-[#7ad9b7] font-semibold">{file.name}</p>
+                  ) : (
+                    <div>
+                      <p className="text-lg font-medium text-white/80 mb-1">Clique para selecionar</p>
+                      <p className="text-sm">PDF de ate {MAX_PDF_MB} MB</p>
+                    </div>
+                  )}
+                </div>
+              </label>
  
-          <button
-            onClick={handleUpload}
-            disabled={!file || uploading}
-            className="w-full mt-6 py-3 bg-[#7ad9b7] text-[#010302] font-bold rounded-lg hover:bg-[#7cdbb9] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {uploading ? 'Enviando...' : 'Enviar fatura'}
-          </button>
+              <button
+                onClick={handleUpload}
+                disabled={!file || uploading}
+                className="w-full mt-6 py-3 bg-[#7ad9b7] text-[#010302] font-bold rounded-lg hover:bg-[#7cdbb9] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {uploading ? 'Enviando...' : 'Enviar fatura'}
+              </button>
  
-          {faturaId && !analise && (
-            <button
-              onClick={handleAnalisar}
-              disabled={analisando}
-              className="w-full mt-3 py-3 bg-white text-[#010302] font-bold rounded-lg hover:bg-white/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {analisando ? 'Analisando com IA... (pode demorar)' : 'Analisar com IA'}
-            </button>
+              {faturaId && !analise && (
+                <button
+                  onClick={handleAnalisar}
+                  disabled={analisando}
+                  className="w-full mt-3 py-3 bg-white text-[#010302] font-bold rounded-lg hover:bg-white/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {analisando ? 'Analisando com IA... (pode demorar)' : 'Analisar com IA'}
+                </button>
+              )}
+            </>
           )}
  
           {aviso && (
@@ -285,6 +352,14 @@ export default function UploadPage() {
               }`}
             >
               {aviso.texto}
+            </div>
+          )}
+ 
+          {/* Aviso de truncamento: fatura longa, analisamos so o inicio */}
+          {truncado && (
+            <div className="mt-4 rounded-xl px-4 py-3 text-sm text-center border bg-amber-500/10 border-amber-400/25 text-amber-200">
+              Essa fatura é bem longa e analisamos a primeira parte dela. Se faltou alguma transação,
+              tente enviar um período menor (ex: uma fatura por mês).
             </div>
           )}
  

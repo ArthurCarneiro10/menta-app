@@ -1,79 +1,24 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { LIMITE_ANALISES_FREE, contarAnalisesFeitas } from '@/lib/limites';
+import { analisarTextoFatura } from '@/lib/analise-fatura';
+ 
+// Permite ate 60s de execucao (plano Hobby). A rota faz download + pdf-parse
+// + chamada de IA em sequencia, que pode passar do limite padrao.
+export const maxDuration = 60;
  
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
  
-// ===== MODELO DE IA =====
-const MODELO_IA = 'anthropic/claude-haiku-4.5';
-// =========================
+// Teto de tamanho do PDF (defesa em profundidade; o cliente ja valida antes).
+const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10 MB
  
-type Transacao = { descricao: string; valor: number; categoria: string };
 type Categoria = { nome: string; valor: number };
  
-function num(v: unknown): number {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
-  if (typeof v === 'string') {
-    let s = v.replace(/[^\d.,-]/g, '').trim();
-    if (s.includes(',') && s.includes('.')) {
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else if (s.includes(',')) {
-      s = s.replace(',', '.');
-    }
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
- 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
- 
-// Formata numero como R$ 1.234,56
+// Formata numero como R$ 1.234,56 (usado na deteccao de gasto fora do padrao)
 function reais(n: number): string {
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
- 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function reconcilia(analise: any) {
-  const transacoesBrutas = Array.isArray(analise?.transacoes) ? analise.transacoes : [];
- 
-  const transacoes: Transacao[] = transacoesBrutas.map((t: Transacao) => ({
-    descricao: String(t?.descricao ?? '').trim() || 'Sem descricao',
-    valor: round2(num(t?.valor)),
-    categoria: String(t?.categoria ?? '').trim() || 'Outros',
-  }));
- 
-  let categorias: Categoria[];
- 
-  if (transacoes.length > 0) {
-    const mapa = new Map<string, number>();
-    for (const t of transacoes) {
-      mapa.set(t.categoria, (mapa.get(t.categoria) || 0) + t.valor);
-    }
-    categorias = Array.from(mapa.entries())
-      .map(([nome, valor]) => ({ nome, valor: round2(valor) }))
-      .sort((a, b) => b.valor - a.valor);
-  } else {
-    const catBrutas = Array.isArray(analise?.categorias) ? analise.categorias : [];
-    categorias = catBrutas
-      .map((c: Categoria) => ({
-        nome: String(c?.nome ?? 'Outros').trim() || 'Outros',
-        valor: round2(num(c?.valor)),
-      }))
-      .sort((a: Categoria, b: Categoria) => b.valor - a.valor);
-  }
- 
-  const total = round2(categorias.reduce((acc, c) => acc + c.valor, 0));
- 
-  return {
-    total,
-    categorias,
-    transacoes,
-    insight: String(analise?.insight ?? '').trim(),
-  };
 }
  
 export async function POST(request: Request) {
@@ -113,6 +58,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ erro: 'Essa fatura nao pertence a sua conta.' }, { status: 403 });
     }
  
+    // ===== LIMITE DO TIER FREE (barreira real, antes de gastar IA) =====
+    // Premium = ilimitado. Free = LIMITE_ANALISES_FREE faturas analisadas no total.
+    // Excluimos a fatura atual da contagem pra que re-analisar uma fatura ja
+    // analisada nao consuma cota nova.
+    const { data: perfil } = await supabase
+      .from('profiles')
+      .select('plano')
+      .eq('id', user.id)
+      .single();
+ 
+    if (perfil?.plano !== 'premium') {
+      const jaAnalisadas = await contarAnalisesFeitas(user.id, supabase, faturaId);
+      if (jaAnalisadas >= LIMITE_ANALISES_FREE) {
+        return NextResponse.json(
+          {
+            erro: `Voce usou suas ${LIMITE_ANALISES_FREE} analises gratuitas.`,
+            limite_atingido: true,
+          },
+          { status: 403 }
+        );
+      }
+    }
+ 
     const arquivoPath = fatura.arquivo_path;
  
     if (!arquivoPath) {
@@ -131,6 +99,14 @@ export async function POST(request: Request) {
       );
     }
  
+    // 1b. Defesa em profundidade: rejeita arquivo grande demais antes de processar
+    if (arquivo.size > MAX_PDF_BYTES) {
+      return NextResponse.json(
+        { erro: 'O arquivo e muito grande. O limite e de 10 MB.' },
+        { status: 413 }
+      );
+    }
+ 
     // 2. Extrai o texto
     const arrayBuffer = await arquivo.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -146,76 +122,18 @@ export async function POST(request: Request) {
       );
     }
  
-    // 3. Monta o prompt
-    const prompt = `Voce e um assistente financeiro. Analise o texto de uma fatura de cartao de credito abaixo.
- 
-Responda APENAS com um JSON valido, sem nenhum texto antes ou depois, neste formato exato:
-{
-  "transacoes": [
-    { "descricao": "iFood", "valor": 38.90, "categoria": "Alimentacao" },
-    { "descricao": "Uber", "valor": 22.40, "categoria": "Transporte" }
-  ],
-  "insight": "uma frase curta e util sobre os gastos, em portugues"
-}
- 
-Categorias possiveis: Alimentacao, Transporte, Compras, Lazer, Saude, Educacao, Moradia, Servicos, Outros.
- 
-REGRAS IMPORTANTES:
-- Liste em "transacoes" CADA compra/gasto individual da fatura, uma por uma.
-- Se o mesmo estabelecimento aparece varias vezes (ex: 5 corridas de Uber no mes), liste TODAS, uma linha para cada. NAO junte nem resuma.
-- Use ponto como separador decimal (ex: 38.90), nunca virgula.
-- Ignore linhas que NAO sao gastos: pagamento da fatura anterior, saldo anterior, estornos/creditos, limite, juros informativos. Liste apenas as COMPRAS.
-- Nao precisa calcular totais nem somas: apenas identifique e classifique cada transacao. A soma e feita depois pelo sistema.
- 
-Texto da fatura:
-${textoFatura.slice(0, 8000)}`;
- 
-    // 4. Chama o OpenRouter
-    const respostaIA = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://app.mentaapp.com.br',
-        'X-Title': 'Menta App',
-      },
-      body: JSON.stringify({
-        model: MODELO_IA,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
- 
-    if (!respostaIA.ok) {
-      const erroTexto = await respostaIA.text();
-      return NextResponse.json({ erro: 'Erro da IA: ' + erroTexto }, { status: 500 });
-    }
- 
-    const dadosIA = await respostaIA.json();
-    const conteudo = dadosIA.choices?.[0]?.message?.content || '';
- 
-    const inicio = conteudo.indexOf('{');
-    const fim = conteudo.lastIndexOf('}');
-    if (inicio === -1 || fim === -1) {
-      return NextResponse.json(
-        { erro: 'A IA nao retornou um JSON valido', respostaCrua: conteudo },
-        { status: 500 }
-      );
-    }
-    const jsonTexto = conteudo.slice(inicio, fim + 1);
- 
-    let analiseBruta;
+    // 3. Analisa o texto (prompt + IA + reconcilia agora vivem em lib/analise-fatura)
+    let analise;
     try {
-      analiseBruta = JSON.parse(jsonTexto);
-    } catch {
+      analise = await analisarTextoFatura(textoFatura);
+    } catch (e) {
       return NextResponse.json(
-        { erro: 'Nao foi possivel ler o JSON da IA', respostaCrua: conteudo },
+        { erro: e instanceof Error ? e.message : 'Falha na analise da IA' },
         { status: 500 }
       );
     }
  
-    const analise = reconcilia(analiseBruta);
- 
-    // 6. Salva no banco
+    // 4. Salva no banco (sem o campo truncado, que eh so um aviso de runtime)
     await supabase
       .from('faturas')
       .update({
@@ -228,7 +146,7 @@ ${textoFatura.slice(0, 8000)}`;
       })
       .eq('id', faturaId);
  
-    // 7. Notificacao de fatura analisada (com o insight como mensagem)
+    // 5. Notificacao de fatura analisada (com o insight como mensagem)
     await supabase.from('notificacoes').insert({
       user_id: user.id,
       tipo: 'fatura_analisada',
@@ -236,7 +154,7 @@ ${textoFatura.slice(0, 8000)}`;
       mensagem: analise.insight || 'Sua fatura foi processada e categorizada pela IA.',
     });
  
-    // 8. GASTO FORA DO PADRAO (5.9.B)
+    // 6. GASTO FORA DO PADRAO
     //    Compara cada categoria com a fatura anterior. Se disparou, gera notificacao.
     try {
       const { data: anterioresArray } = await supabase
@@ -297,7 +215,7 @@ ${textoFatura.slice(0, 8000)}`;
             user_id: user.id,
             tipo: 'gasto_disparou',
             titulo,
-            mensagem: partes.join(' · '),
+            mensagem: partes.join(' \u00b7 '),
           });
         }
       }
@@ -306,10 +224,11 @@ ${textoFatura.slice(0, 8000)}`;
       console.error('Falha ao detectar gasto fora do padrao:', e);
     }
  
-    // 9. Retorna a analise
+    // 7. Retorna a analise (truncado avisa a UI se a fatura foi cortada)
     return NextResponse.json({
       sucesso: true,
       analise,
+      truncado: analise.truncado,
     });
   } catch (erro) {
     return NextResponse.json(
