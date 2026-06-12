@@ -44,9 +44,12 @@ export async function POST(request: Request) {
     }
  
     // ===== SEGURANCA: 2) busca a fatura e confirma que e do usuario =====
+    // Tras tambem `analisado_em`: se ja tem data, esta eh uma RE-analise (a
+    // fatura ja foi analisada antes) - nao consome cota nem incrementa o
+    // contador vitalicio. Se eh null, eh a primeira analise dessa fatura.
     const { data: fatura, error: faturaError } = await supabase
       .from('faturas')
-      .select('id, user_id, arquivo_path, nome_original')
+      .select('id, user_id, arquivo_path, nome_original, analisado_em')
       .eq('id', faturaId)
       .single();
  
@@ -58,18 +61,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ erro: 'Essa fatura nao pertence a sua conta.' }, { status: 403 });
     }
  
+    // Primeira analise dessa fatura? (analisado_em vazio = sim)
+    const ehReanalise = !!fatura.analisado_em;
+ 
     // ===== LIMITE DO TIER FREE (barreira real, antes de gastar IA) =====
-    // Premium = ilimitado. Free = LIMITE_ANALISES_FREE faturas analisadas no total.
-    // Excluimos a fatura atual da contagem pra que re-analisar uma fatura ja
-    // analisada nao consuma cota nova.
+    // Premium = ilimitado. Free = LIMITE_ANALISES_FREE analises vitalicias.
+    // O contador (profiles.analises_vitalicias) so sobe e nunca diminui, entao
+    // deletar faturas NAO devolve cota. Re-analise nao checa limite: o usuario
+    // ja gastou essa cota quando analisou a fatura pela primeira vez.
     const { data: perfil } = await supabase
       .from('profiles')
       .select('plano')
       .eq('id', user.id)
       .single();
  
-    if (perfil?.plano !== 'premium') {
-      const jaAnalisadas = await contarAnalisesFeitas(user.id, supabase, faturaId);
+    if (perfil?.plano !== 'premium' && !ehReanalise) {
+      const jaAnalisadas = await contarAnalisesFeitas(user.id, supabase);
       if (jaAnalisadas >= LIMITE_ANALISES_FREE) {
         return NextResponse.json(
           {
@@ -145,6 +152,25 @@ export async function POST(request: Request) {
         analisado_em: new Date().toISOString(),
       })
       .eq('id', faturaId);
+ 
+    // 4b. CONTADOR VITALICIO: incrementa +1 SO se foi a primeira analise dessa
+    //     fatura. Re-analise nao incrementa. Usa funcao atomica no banco
+    //     (incrementar_analises) pra evitar erro de contagem. Tolerante a falha:
+    //     se o incremento falhar, a analise ja foi salva e nao quebramos a
+    //     resposta - apenas logamos. O risco (contador nao subir num erro raro)
+    //     eh aceitavel e nao cobra nem bloqueia ninguem errado.
+    if (!ehReanalise) {
+      try {
+        const { error: incError } = await supabase.rpc('incrementar_analises', {
+          uid: user.id,
+        });
+        if (incError) {
+          console.error('[analisar] erro incrementando analises_vitalicias:', incError);
+        }
+      } catch (e) {
+        console.error('[analisar] excecao incrementando contador:', e);
+      }
+    }
  
     // 5. Notificacao de fatura analisada (com o insight como mensagem)
     await supabase.from('notificacoes').insert({

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 // ===== MODELO DE IA =====
-const MODELO_IA = 'openai/gpt-4o-mini';
+const MODELO_IA = 'anthropic/claude-sonnet-4.6';
 // =========================
 
 export async function POST(request: Request) {

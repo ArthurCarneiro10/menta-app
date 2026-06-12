@@ -7,6 +7,13 @@
  *
  * Free  = LIMITE_ANALISES_FREE analises de fatura, vitalicio.
  * Premium = ilimitado.
+ *
+ * MODELO VITALICIO (importante):
+ * A contagem NAO conta mais linhas da tabela `faturas`. Ela le a coluna
+ * `profiles.analises_vitalicias`, um numero que so SOBE (incrementado pela
+ * rota /api/analisar a cada nova analise) e NUNCA diminui. Por isso, deletar
+ * uma fatura na aba Gastos nao devolve cota - era a brecha que permitia usar
+ * o Free infinitamente (analisar -> deletar -> repetir).
  */
  
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -15,37 +22,31 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export const LIMITE_ANALISES_FREE = 5;
  
 /**
- * Conta quantas faturas distintas o usuario ja analisou (vitalicio).
+ * Le quantas analises vitalicias o usuario ja fez (coluna profiles.analises_vitalicias).
  *
- * `excetoFaturaId` permite excluir uma fatura da contagem - usado pra que
- * RE-analisar uma fatura ja analisada nao consuma cota nova.
+ * O terceiro parametro (excetoFaturaId) foi mantido por compatibilidade com
+ * chamadores antigos, mas NAO eh mais usado: o contador agora eh um numero
+ * fixo no perfil, nao uma contagem de linhas que pudesse incluir a fatura atual.
  *
- * Fail-open: se a contagem falhar (erro transitorio de DB), retorna 0 pra
- * nao bloquear indevidamente um usuario legitimo. O risco (alguem passar do
- * limite num erro raro) eh baixo e preferivel a punir usuario por falha de
- * infra.
+ * Fail-open: se a leitura falhar (erro transitorio de DB), retorna 0 pra nao
+ * bloquear indevidamente um usuario legitimo. O risco (alguem passar do limite
+ * num erro raro) eh baixo e preferivel a punir usuario por falha de infra.
  */
 export async function contarAnalisesFeitas(
   userId: string,
   supabase: SupabaseClient,
-  excetoFaturaId?: string
+  _excetoFaturaId?: string
 ): Promise<number> {
-  let query = supabase
-    .from('faturas')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .not('analisado_em', 'is', null);
- 
-  if (excetoFaturaId) {
-    query = query.neq('id', excetoFaturaId);
-  }
- 
-  const { count, error } = await query;
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('analises_vitalicias')
+    .eq('id', userId)
+    .maybeSingle();
  
   if (error) {
-    console.error('[limites] erro contando analises:', error);
+    console.error('[limites] erro lendo analises_vitalicias:', error);
     return 0;
   }
  
-  return count ?? 0;
+  return data?.analises_vitalicias ?? 0;
 }
