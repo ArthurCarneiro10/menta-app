@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
+import { ChevronRight } from 'lucide-react';
 import SinoNotificacoes from '@/components/SinoNotificacoes';
 import OnboardingModal from '@/components/OnboardingModal';
  
@@ -57,6 +58,11 @@ export default function DashboardPage() {
   const [numContasBancarias, setNumContasBancarias] = useState(0);
  
   const [temFaturasAntigas, setTemFaturasAntigas] = useState(false);
+ 
+  // Abre a aba Gastos ja filtrada na categoria clicada (#5)
+  function abrirGastosCategoria(nomeCat: string) {
+    router.push(`/gastos?categoria=${encodeURIComponent(nomeCat)}`);
+  }
  
   useEffect(() => {
     async function init() {
@@ -209,6 +215,29 @@ export default function DashboardPage() {
   // Flags pra decidir o layout do bloco hero
   const temSaldoCard = plano === 'premium' && temConexao && numContasBancarias > 0;
   const temGastoCard = plano === 'premium' && temTxRecente;
+ 
+  // Cartao de categoria clicavel (#5) - usado nas duas listas (Free e Premium)
+  function CategoriaCard({ cat, total, cor }: { cat: Categoria; total: number; cor: string }) {
+    const pct = total > 0 ? (cat.valor / total) * 100 : 0;
+    return (
+      <button
+        onClick={() => abrirGastosCategoria(cat.nome)}
+        className="w-full text-left bg-white rounded-2xl p-3 hover:shadow-md transition-shadow cursor-pointer"
+        style={{ border: '1px solid #eef2ef' }}
+      >
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-semibold text-sm text-[#010302]">{cat.nome}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="font-bold text-sm text-[#010302]">R$ {fmt(cat.valor)}</p>
+            <ChevronRight size={16} color="#b8c4be" />
+          </div>
+        </div>
+        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#f0f4f1' }}>
+          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: cor }} />
+        </div>
+      </button>
+    );
+  }
  
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-16">
@@ -412,23 +441,9 @@ export default function DashboardPage() {
                 Para onde foi o dinheiro
               </h2>
               <div className="space-y-2">
-                {fatura.categorias.map((cat, i) => {
-                  const pct = somaFatura > 0 ? (cat.valor / somaFatura) * 100 : 0;
-                  return (
-                    <div key={i} className="bg-white rounded-2xl p-3" style={{ border: '1px solid #eef2ef' }}>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="font-semibold text-sm text-[#010302]">{cat.nome}</p>
-                        <p className="font-bold text-sm text-[#010302]">R$ {fmt(cat.valor)}</p>
-                      </div>
-                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#f0f4f1' }}>
-                        <div
-                          className="h-full rounded-full"
-                          style={{ width: `${pct}%`, background: CORES[i % CORES.length] }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                {fatura.categorias.map((cat, i) => (
+                  <CategoriaCard key={i} cat={cat} total={somaFatura} cor={CORES[i % CORES.length]} />
+                ))}
               </div>
             </div>
           </>
@@ -482,23 +497,9 @@ export default function DashboardPage() {
               Para onde foi o dinheiro
             </h2>
             <div className="space-y-2">
-              {categoriasBanco.map((cat, i) => {
-                const pct = totalBanco > 0 ? (cat.valor / totalBanco) * 100 : 0;
-                return (
-                  <div key={i} className="bg-white rounded-2xl p-3" style={{ border: '1px solid #eef2ef' }}>
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="font-semibold text-sm text-[#010302]">{cat.nome}</p>
-                      <p className="font-bold text-sm text-[#010302]">R$ {fmt(cat.valor)}</p>
-                    </div>
-                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#f0f4f1' }}>
-                      <div
-                        className="h-full rounded-full"
-                        style={{ width: `${pct}%`, background: CORES[i % CORES.length] }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+              {categoriasBanco.map((cat, i) => (
+                <CategoriaCard key={i} cat={cat} total={totalBanco} cor={CORES[i % CORES.length]} />
+              ))}
             </div>
           </div>
         )}
@@ -519,3 +520,4 @@ export default function DashboardPage() {
     </main>
   );
 }
+ 

@@ -1,7 +1,7 @@
 'use client';
  
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
 import { Sparkles, Coffee, Car, ShoppingBag, Heart, MoreHorizontal, FileText, Trash2, RefreshCw, Wallet, CreditCard } from 'lucide-react';
@@ -69,8 +69,11 @@ function fmtDataCurta(s: string): string {
   return `${partes[2]}/${partes[1]}`;
 }
  
-export default function GastosPage() {
+function GastosConteudo() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const categoriaURL = searchParams.get('categoria'); // #5: filtro vindo da dashboard
+ 
   const [carregando, setCarregando] = useState(true);
   const [plano, setPlano] = useState<'free' | 'premium'>('free');
   const [temConexao, setTemConexao] = useState(false);
@@ -86,9 +89,18 @@ export default function GastosPage() {
   const [periodo, setPeriodo] = useState<7 | 30 | 90>(30);
   const [contas, setContas] = useState<ContaBancaria[]>([]);
   const [contaFiltro, setContaFiltro] = useState<string>('todas');
+  const [catFiltro, setCatFiltro] = useState('Todos'); // #3: filtro de categoria no timeline
   const [txs, setTxs] = useState<TransacaoBanco[]>([]);
   const [carregandoTxs, setCarregandoTxs] = useState(false);
   const [temFaturasAntigas, setTemFaturasAntigas] = useState(false);
+ 
+  // Aplica a categoria vinda da URL (dashboard -> aqui), nos dois modos.
+  useEffect(() => {
+    if (categoriaURL) {
+      setFiltro(categoriaURL);
+      setCatFiltro(categoriaURL);
+    }
+  }, [categoriaURL]);
  
   useEffect(() => {
     async function init() {
@@ -253,12 +265,28 @@ export default function GastosPage() {
   }
  
   // =========================================================
-  // BRANCH: Premium COM conexao → modo Timeline
+  // BRANCH: Premium COM conexao -> modo Timeline
   // =========================================================
   if (plano === 'premium' && temConexao) {
     // Filtra transacoes pela conta selecionada
-    const txsFiltradas =
+    const porConta =
       contaFiltro === 'todas' ? txs : txs.filter((t) => t.conta_id === contaFiltro);
+ 
+    // #3: categorias presentes nas transacoes (debitos), pra montar os chips
+    const catsDisponiveis = Array.from(
+      new Set(
+        porConta
+          .filter((t) => t.tipo === 'DEBIT')
+          .map((t) => (t.categoria || 'Outros').trim() || 'Outros')
+      )
+    );
+    const filtrosCategoria = ['Todos', ...catsDisponiveis];
+ 
+    // aplica filtro de categoria (#3) por cima do filtro de conta
+    const txsFiltradas =
+      catFiltro === 'Todos'
+        ? porConta
+        : porConta.filter((t) => ((t.categoria || 'Outros').trim() || 'Outros') === catFiltro);
  
     // Calcula stats (so DEBITs = gastos)
     const debits = txsFiltradas.filter((t) => t.tipo === 'DEBIT');
@@ -320,6 +348,36 @@ export default function GastosPage() {
             ))}
           </div>
         </div>
+ 
+        {/* #3: Chips de categoria (so aparece se houver categorias) */}
+        {filtrosCategoria.length > 1 && (
+          <div style={{ padding: '12px 16px 0' }}>
+            <p style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: COLORS.muted, marginBottom: '6px' }}>
+              Categoria
+            </p>
+            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+              {filtrosCategoria.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCatFiltro(c)}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '999px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer',
+                    background: catFiltro === c ? COLORS.primary : 'white',
+                    color: catFiltro === c ? COLORS.ink : COLORS.primaryMid,
+                    border: catFiltro === c ? 'none' : '1px solid #e6ebe8',
+                  }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
  
         {/* Chips de conta */}
         {contas.length > 0 && (
@@ -459,10 +517,6 @@ export default function GastosPage() {
           <div style={{ padding: '0 16px 24px', textAlign: 'center' }}>
             <button
               onClick={() => {
-                // hack para forcar mostrar PDFs sem mudar plano:
-                // navega pra mesma pagina com parametro - implementacao futura
-                // Por ora, leva pra um detalhe via /upload (acesso temporario)
-                // Melhor: implementar /historico em wave futura. Por ora apenas info:
                 alert('Para acessar o histórico de PDFs, desconecte o banco temporariamente em /conectar. Em breve, uma tela dedicada para o histórico.');
               }}
               style={{
@@ -483,7 +537,7 @@ export default function GastosPage() {
   }
  
   // =========================================================
-  // BRANCH PADRAO: Free OU Premium sem conexao → modo PDF (ORIGINAL, intocado)
+  // BRANCH PADRAO: Free OU Premium sem conexao -> modo PDF
   // =========================================================
  
   const ultimaAnalisada = faturas.find((f) => f.status === 'analisada' && f.categorias);
@@ -492,10 +546,12 @@ export default function GastosPage() {
   const totalUltima = ultimaAnalisada?.total ?? 0;
   const maiorValor = categorias.reduce((max, c) => (c.valor > max ? c.valor : max), 0);
   const filtros = ['Todos', ...categorias.map((c) => c.nome)];
+  // se o filtro vindo da URL nao existir nesta fatura, cai em "Todos" (evita lista vazia)
+  const filtroEfetivo = filtros.includes(filtro) ? filtro : 'Todos';
   const categoriasFiltradas =
-    filtro === 'Todos' ? categorias : categorias.filter((c) => c.nome === filtro);
+    filtroEfetivo === 'Todos' ? categorias : categorias.filter((c) => c.nome === filtroEfetivo);
   const transacoesFiltradas =
-    filtro === 'Todos' ? transacoes : transacoes.filter((t) => t.categoria === filtro);
+    filtroEfetivo === 'Todos' ? transacoes : transacoes.filter((t) => t.categoria === filtroEfetivo);
  
   return (
     <div>
@@ -553,9 +609,9 @@ export default function GastosPage() {
                     fontWeight: 700,
                     whiteSpace: 'nowrap',
                     cursor: 'pointer',
-                    background: filtro === f ? COLORS.primary : 'white',
-                    color: filtro === f ? COLORS.ink : COLORS.primaryMid,
-                    border: filtro === f ? 'none' : '1px solid #e6ebe8',
+                    background: filtroEfetivo === f ? COLORS.primary : 'white',
+                    color: filtroEfetivo === f ? COLORS.ink : COLORS.primaryMid,
+                    border: filtroEfetivo === f ? 'none' : '1px solid #e6ebe8',
                   }}
                 >
                   {f}
@@ -596,7 +652,7 @@ export default function GastosPage() {
           {transacoesFiltradas.length > 0 && (
             <div style={{ padding: '0 16px 16px' }}>
               <h2 style={{ fontSize: '16px', fontWeight: 700, color: COLORS.ink, marginBottom: '12px' }}>
-                {filtro === 'Todos' ? 'Todas as compras' : `Compras em ${filtro}`}
+                {filtroEfetivo === 'Todos' ? 'Todas as compras' : `Compras em ${filtroEfetivo}`}
               </h2>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {transacoesFiltradas.map((t, i) => {
@@ -692,5 +748,14 @@ export default function GastosPage() {
         </>
       )}
     </div>
+  );
+}
+ 
+// useSearchParams exige Suspense no Next.js (App Router). Embrulha o conteudo.
+export default function GastosPage() {
+  return (
+    <Suspense fallback={null}>
+      <GastosConteudo />
+    </Suspense>
   );
 }

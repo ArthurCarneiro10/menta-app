@@ -1,10 +1,10 @@
 'use client';
-
+ 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { Sparkles, Send } from 'lucide-react';
-
+ 
 // Paleta oficial Menta
 const COLORS = {
   primary: '#7ad9b7',
@@ -14,11 +14,11 @@ const COLORS = {
   ink: '#010302',
   muted: '#86958f',
 };
-
+ 
 type Mensagem = { role: 'ai' | 'user'; text: string };
 type Categoria = { nome: string; valor: number };
 type Transacao = { descricao: string; valor: number; categoria: string };
-
+ 
 export default function IAChatPage() {
   const router = useRouter();
   const [mensagens, setMensagens] = useState<Mensagem[]>([
@@ -28,15 +28,15 @@ export default function IAChatPage() {
   const [pensando, setPensando] = useState(false);
   const [dadosTexto, setDadosTexto] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
-
+ 
   // Sugestoes prontas pra clicar
   const sugestoes = [
     'Onde eu mais gastei esse mes?',
     'Quanto gastei com alimentacao?',
     'Me da uma dica pra economizar',
   ];
-
-  // Carrega os dados da ultima fatura analisada (pra mandar pra IA)
+ 
+  // Monta o resumo que vai pra IA. Premium com banco -> 30 dias do banco; senao -> fatura.
   useEffect(() => {
     async function carregar() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -44,20 +44,86 @@ export default function IAChatPage() {
         router.push('/login');
         return;
       }
-
+ 
+      // Plano + conexao bancaria
+      const { data: perfil } = await supabase
+        .from('profiles').select('plano').eq('id', user.id).maybeSingle();
+      const ehPremium = perfil?.plano === 'premium';
+ 
+      let temConexao = false;
+      if (ehPremium) {
+        const { count } = await supabase
+          .from('connections').select('id', { count: 'exact', head: true }).eq('user_id', user.id);
+        temConexao = (count || 0) > 0;
+      }
+ 
+      // ===== Premium COM banco: usa transacoes_banco dos ultimos 30 dias =====
+      if (ehPremium && temConexao) {
+        const trinta = new Date();
+        trinta.setDate(trinta.getDate() - 30);
+        const limite = trinta.toISOString().slice(0, 10);
+ 
+        const { data: txs } = await supabase
+          .from('transacoes_banco')
+          .select('valor, tipo, categoria, descricao, merchant_nome')
+          .eq('user_id', user.id)
+          .gte('data', limite);
+ 
+        const debits = (txs || []).filter((t: { tipo: string | null }) => t.tipo === 'DEBIT');
+ 
+        if (debits.length > 0) {
+          let total = 0;
+          const mapa = new Map<string, number>();
+          for (const t of debits as { valor: number | string | null; categoria: string | null }[]) {
+            const v = Math.abs(Number(t.valor || 0));
+            total += v;
+            const cat = (t.categoria || 'Outros').trim() || 'Outros';
+            mapa.set(cat, (mapa.get(cat) || 0) + v);
+          }
+          const categorias = Array.from(mapa.entries())
+            .map(([nome, valor]) => ({ nome, valor }))
+            .sort((a, b) => b.valor - a.valor);
+ 
+          let texto = `Fonte: transacoes bancarias reais dos ultimos 30 dias (Open Finance).\n`;
+          texto += `Total gasto em 30 dias: R$ ${total.toFixed(2)}\n`;
+          texto += `Numero de transacoes de gasto: ${debits.length}\n`;
+          texto += `Gastos por categoria:\n`;
+          categorias.forEach((c) => { texto += `- ${c.nome}: R$ ${c.valor.toFixed(2)}\n`; });
+ 
+          const maiores = [...debits]
+            .map((t: { valor: number | string | null; categoria: string | null; descricao: string | null; merchant_nome: string | null }) => ({
+              desc: (t.descricao || t.merchant_nome || 'Sem descricao').trim(),
+              cat: (t.categoria || 'Outros').trim() || 'Outros',
+              valor: Math.abs(Number(t.valor || 0)),
+            }))
+            .sort((a, b) => b.valor - a.valor)
+            .slice(0, 15);
+          texto += `Maiores gastos individuais:\n`;
+          maiores.forEach((t) => { texto += `- ${t.desc} (${t.cat}): R$ ${t.valor.toFixed(2)}\n`; });
+ 
+          setDadosTexto(texto);
+          return;
+        }
+ 
+        setDadosTexto('O usuario e Premium e tem banco conectado, mas nao ha transacoes nos ultimos 30 dias.');
+        return;
+      }
+ 
+      // ===== Free, ou Premium sem banco: usa a ultima fatura analisada =====
       const { data } = await supabase
         .from('faturas')
         .select('*')
+        .eq('user_id', user.id)
         .eq('status', 'analisada')
         .order('analisado_em', { ascending: false })
         .limit(1)
         .maybeSingle();
-
+ 
       if (data) {
         const categorias: Categoria[] = data.categorias ?? [];
         const transacoes: Transacao[] = data.transacoes ?? [];
-        // monta um texto resumido pra mandar pra IA
-        let texto = `Total da fatura: R$ ${data.total}\n`;
+        let texto = `Fonte: ultima fatura de cartao analisada (PDF).\n`;
+        texto += `Total da fatura: R$ ${data.total}\n`;
         texto += `Insight: ${data.insight ?? 'sem insight'}\n`;
         texto += `Gastos por categoria:\n`;
         categorias.forEach((c) => {
@@ -76,24 +142,36 @@ export default function IAChatPage() {
     }
     carregar();
   }, [router]);
-
+ 
   // rola pro final quando chega mensagem nova
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [mensagens, pensando]);
-
+ 
   async function enviar(texto: string) {
     if (!texto.trim() || pensando) return;
-
+ 
     // adiciona a mensagem do usuario na tela
     setMensagens((m) => [...m, { role: 'user', text: texto }]);
     setInput('');
     setPensando(true);
-
+ 
     try {
+      // /api/chat exige login: manda o Bearer token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        setMensagens((m) => [...m, { role: 'ai', text: 'Sua sessao expirou. Saia e entre de novo para continuar.' }]);
+        setPensando(false);
+        return;
+      }
+ 
       const resp = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token,
+        },
         body: JSON.stringify({ pergunta: texto, dados: dadosTexto }),
       });
       const json = await resp.json();
@@ -105,7 +183,7 @@ export default function IAChatPage() {
       setPensando(false);
     }
   }
-
+ 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       {/* Header */}
@@ -122,7 +200,7 @@ export default function IAChatPage() {
           </div>
         </div>
       </div>
-
+ 
       {/* Mensagens */}
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -147,7 +225,7 @@ export default function IAChatPage() {
               </div>
             </div>
           ))}
-
+ 
           {/* indicador "pensando" */}
           {pensando && (
             <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
@@ -158,7 +236,7 @@ export default function IAChatPage() {
           )}
         </div>
       </div>
-
+ 
       {/* Sugestoes */}
       <div style={{ padding: '0 16px 8px', flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
@@ -184,7 +262,7 @@ export default function IAChatPage() {
           ))}
         </div>
       </div>
-
+ 
       {/* Input */}
       <div style={{ padding: '0 16px 100px', flexShrink: 0 }}>
         <div style={{ borderRadius: '999px', padding: '6px', display: 'flex', alignItems: 'center', gap: '8px', background: 'white', border: '1px solid #eef2ef' }}>
