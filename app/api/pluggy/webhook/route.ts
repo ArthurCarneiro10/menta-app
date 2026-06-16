@@ -1,12 +1,28 @@
 /**
  * Webhook Pluggy: recebe eventos automaticos.
  *
+ * SEGURANCA EM CAMADAS (defense in depth):
+ *  1. Validacao de assinatura HMAC (quando configurada) - ver modos abaixo.
+ *  2. Re-confirmacao via API: eventos de sync NUNCA confiam no payload; os
+ *     dados vem sempre da API Pluggy autenticada (sincronizarUmaConexao).
+ *     Um evento falsificado nao leva a nada porque a API e a fonte da verdade.
+ *  3. Idempotencia: evento duplicado (Pluggy reenvia se nao recebe 200 rapido)
+ *     e ignorado dentro de uma janela curta, evitando sync repetido.
+ *  4. Timeout interno no sync: se passar do limite, responde 200 mesmo assim
+ *     (pra Pluggy nao reenviar infinitamente) e loga incompleto; a proxima
+ *     sincronizacao completa o que faltou.
+ *
  * Modo de operacao via env vars:
  *   - PLUGGY_WEBHOOK_SECRET   -> chave HMAC para validar assinatura
  *   - PLUGGY_WEBHOOK_STRICT   -> 'true' rejeita sem assinatura valida
  *   - PLUGGY_WEBHOOK_VERBOSE  -> 'true' loga payload completo e headers
  *
- * Em modo padrao (sem strict, sem verbose): so loga essencial.
+ * ESTRATEGIA DE LANCAMENTO (2 fases):
+ *   Fase 1 (primeiro evento real): VERBOSE=true, STRICT=false.
+ *     Captura como o Pluggy assina (header + formato). Seguranca vem das
+ *     camadas 2/3/4. NAO rejeita evento legitimo por engano de HMAC.
+ *   Fase 2 (apos confirmar o formato): STRICT=true. Validacao criptografica
+ *     ligada + todas as camadas. Seguranca maxima.
  *
  * Eventos tratados:
  *   - item/updated, item/created, transactions/*  -> sincroniza
@@ -22,6 +38,14 @@ import { sincronizarUmaConexao } from '@/lib/sincronizar';
  
 export const maxDuration = 60;
  
+// Timeout interno do sync: corta antes do maxDuration (60s) pra sempre dar
+// tempo de responder 200 ao Pluggy. 50s deixa folga pra resposta.
+const SYNC_TIMEOUT_MS = 50_000;
+ 
+// Janela de idempotencia: eventos identicos dentro desse intervalo sao
+// considerados duplicados e ignorados (Pluggy reenvia em segundos).
+const DEDUP_JANELA_MS = 30_000;
+ 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -31,8 +55,32 @@ const SIGNING_SECRET = process.env.PLUGGY_WEBHOOK_SECRET || '';
 const STRICT_MODE = process.env.PLUGGY_WEBHOOK_STRICT === 'true';
 const VERBOSE_MODE = process.env.PLUGGY_WEBHOOK_VERBOSE === 'true';
  
+// Cache de idempotencia em memoria do processo. Chave = hash do evento+item.
+// Observacao: em serverless cada instancia tem o seu; nao e perfeito entre
+// instancias, mas cobre o caso comum (reenvio rapido cai na mesma instancia
+// quente). Pra dedup forte entre instancias, seria preciso uma tabela; por
+// ora isso e suficiente e sem custo de DB.
+const eventosRecentes = new Map<string, number>();
+ 
+function jaProcessado(chave: string): boolean {
+  const agora = Date.now();
+  // limpa expirados (mantem o Map pequeno)
+  for (const [k, t] of eventosRecentes) {
+    if (agora - t > DEDUP_JANELA_MS) eventosRecentes.delete(k);
+  }
+  const visto = eventosRecentes.get(chave);
+  if (visto && agora - visto < DEDUP_JANELA_MS) return true;
+  eventosRecentes.set(chave, agora);
+  return false;
+}
+ 
 function validarAssinatura(rawBody: string, assinatura: string): boolean {
   if (!SIGNING_SECRET || !assinatura) return false;
+ 
+  // Alguns provedores prefixam o algoritmo (ex: "sha256=abc..."). Limpa.
+  const limpa = assinatura.includes('=')
+    ? assinatura.split('=').pop() || assinatura
+    : assinatura;
  
   const esperado = crypto
     .createHmac('sha256', SIGNING_SECRET)
@@ -40,12 +88,27 @@ function validarAssinatura(rawBody: string, assinatura: string): boolean {
     .digest('hex');
  
   try {
-    const a = Buffer.from(assinatura, 'hex');
+    const a = Buffer.from(limpa, 'hex');
     const b = Buffer.from(esperado, 'hex');
     if (a.length !== b.length) return false;
     return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
+  }
+}
+ 
+// Executa o sync com um teto de tempo. Se estourar, resolve com 'timeout'
+// em vez de pendurar a request ate o Pluggy desistir.
+async function sincronizarComTimeout(conexao: Parameters<typeof sincronizarUmaConexao>[0]): Promise<'ok' | 'timeout' | 'erro'> {
+  try {
+    const resultado = await Promise.race([
+      sincronizarUmaConexao(conexao).then(() => 'ok' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), SYNC_TIMEOUT_MS)),
+    ]);
+    return resultado;
+  } catch (e) {
+    console.error('[webhook] erro no sync:', e);
+    return 'erro';
   }
 }
  
@@ -92,6 +155,8 @@ export async function POST(request: Request) {
         if (STRICT_MODE) {
           return NextResponse.json({ erro: 'Assinatura invalida' }, { status: 401 });
         }
+      } else if (VERBOSE_MODE) {
+        console.log('[webhook] Assinatura VALIDA');
       }
     } else if (STRICT_MODE) {
       console.warn('[webhook] STRICT mode + sem secret ou assinatura');
@@ -106,6 +171,7 @@ export async function POST(request: Request) {
       event?: string;
       eventType?: string;
       itemId?: string;
+      id?: string;
       data?: Record<string, unknown>;
       error?: Record<string, unknown>;
     };
@@ -130,15 +196,30 @@ export async function POST(request: Request) {
       });
     }
  
-    // ===== BUSCA CONEXAO =====
+    // ===== IDEMPOTENCIA: ignora evento duplicado recente =====
+    // Usa o id do evento se vier; senao, combina tipo+item (suficiente pra
+    // barrar reenvios rapidos do mesmo evento).
+    const chaveEvento = `${payload.id || ''}:${eventType}:${itemId}`;
+    if (jaProcessado(chaveEvento)) {
+      console.log(`[webhook] duplicado ignorado: ${eventType} item=${itemId}`);
+      return NextResponse.json({
+        recebido: true,
+        evento: eventType,
+        itemId,
+        acao: 'duplicado_ignorado',
+      });
+    }
+ 
+    // ===== BUSCA CONEXAO (maybeSingle: nao estoura se nao achar) =====
     const { data: conexao } = await supabase
       .from('connections')
       .select('id, user_id, pluggy_item_id, connector_name')
       .eq('pluggy_item_id', itemId)
-      .single();
+      .maybeSingle();
  
     if (!conexao) {
-      // Log so quando algo nao bate (caso util de debug)
+      // Item desconhecido: NAO e erro (pode ser evento de outro ambiente, ou
+      // conexao ja apagada). Responde 200 pra Pluggy nao reenviar pra sempre.
       console.log(`[webhook] conexao nao encontrada: item=${itemId} evento=${eventType}`);
       return NextResponse.json({
         recebido: true,
@@ -157,8 +238,14 @@ export async function POST(request: Request) {
       eventType === 'transactions/updated' ||
       eventType === 'transactions/deleted'
     ) {
-      acao = 'sincronizado';
-      await sincronizarUmaConexao(conexao);
+      // Sync com timeout: se demorar demais, corta e responde mesmo assim.
+      const resultado = await sincronizarComTimeout(conexao);
+      acao = resultado === 'ok' ? 'sincronizado'
+           : resultado === 'timeout' ? 'sync_incompleto_timeout'
+           : 'sync_erro';
+      if (resultado === 'timeout') {
+        console.warn(`[webhook] sync excedeu ${SYNC_TIMEOUT_MS}ms item=${itemId} - completa na proxima`);
+      }
       // ATENCAO: webhook NAO cria notificacao "Suas transacoes foram atualizadas"
       // pra evitar spam. Notificacao so e gerada por sync manual do usuario
       // ou por eventos de erro/MFA abaixo.
