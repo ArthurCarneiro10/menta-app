@@ -61,6 +61,12 @@ const fmt = (n: number) =>
   n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const CORES_BARRA = ['#7ad9b7', '#3d7d66', '#7cdbb9', '#407c66', '#183e31'];
  
+// 9 categorias canonicas da Menta (para edicao de categoria - #4)
+const CATEGORIAS_CANONICAS = [
+  'Alimentação', 'Transporte', 'Compras', 'Lazer', 'Saúde',
+  'Educação', 'Moradia', 'Serviços', 'Outros',
+];
+ 
 // Formata data YYYY-MM-DD em DD/MM
 function fmtDataCurta(s: string): string {
   if (!s) return '';
@@ -93,6 +99,38 @@ function GastosConteudo() {
   const [txs, setTxs] = useState<TransacaoBanco[]>([]);
   const [carregandoTxs, setCarregandoTxs] = useState(false);
   const [temFaturasAntigas, setTemFaturasAntigas] = useState(false);
+ 
+  // #4: edicao de categoria de uma transacao do banco
+  const [txEditando, setTxEditando] = useState<TransacaoBanco | null>(null);
+  const [salvandoCat, setSalvandoCat] = useState(false);
+  const [erroCat, setErroCat] = useState('');
+ 
+  // Salva a nova categoria via /api/transacao/categoria e atualiza local na hora
+  async function salvarCategoria(novaCategoria: string) {
+    if (!txEditando) return;
+    setSalvandoCat(true);
+    setErroCat('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) { setErroCat('Sua sessao expirou. Saia e entre de novo.'); setSalvandoCat(false); return; }
+ 
+      const resp = await fetch('/api/transacao/categoria', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ transacaoId: txEditando.id, novaCategoria }),
+      });
+      const dados = await resp.json();
+      if (!dados.sucesso) { setErroCat(dados.erro || 'Nao foi possivel atualizar.'); setSalvandoCat(false); return; }
+ 
+      setTxs((prev) => prev.map((t) => (t.id === txEditando.id ? { ...t, categoria: novaCategoria } : t)));
+      setTxEditando(null);
+      setSalvandoCat(false);
+    } catch {
+      setErroCat('A conexao falhou. Tente de novo.');
+      setSalvandoCat(false);
+    }
+  }
  
   // Aplica a categoria vinda da URL (dashboard -> aqui), nos dois modos.
   useEffect(() => {
@@ -162,12 +200,15 @@ function GastosConteudo() {
       const inicio = new Date();
       inicio.setDate(inicio.getDate() - periodo);
       const limite = inicio.toISOString().slice(0, 10);
+      // Teto: ate hoje. Parcelas com data futura nao entram no periodo (#6).
+      const hoje = new Date().toISOString().slice(0, 10);
  
       const { data } = await supabase
         .from('transacoes_banco')
         .select('id, data, descricao, valor, tipo, categoria, merchant_nome, conta_id')
         .eq('user_id', user.id)
         .gte('data', limite)
+        .lte('data', hoje)
         .order('data', { ascending: false });
  
       setTxs((data || []) as TransacaoBanco[]);
@@ -488,7 +529,11 @@ function GastosConteudo() {
                 const desc = (t.descricao || t.merchant_nome || 'Sem descrição').trim();
  
                 return (
-                  <div key={t.id} style={{ background: 'white', borderRadius: '16px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid #eef2ef' }}>
+                  <div
+                    key={t.id}
+                    onClick={() => { if (ehDebit) { setErroCat(''); setTxEditando(t); } }}
+                    style={{ background: 'white', borderRadius: '16px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid #eef2ef', cursor: ehDebit ? 'pointer' : 'default' }}
+                  >
                     <div style={{ width: '40px', height: '40px', borderRadius: '12px', display: 'grid', placeItems: 'center', background: '#f4f7f5', flexShrink: 0 }}>
                       <Icon size={18} color={COLORS.primaryMid} />
                     </div>
@@ -497,7 +542,7 @@ function GastosConteudo() {
                         {desc}
                       </p>
                       <p style={{ fontSize: '11px', color: COLORS.muted, margin: '2px 0 0' }}>
-                        {fmtDataCurta(t.data)}{t.categoria ? ` · ${t.categoria}` : ''}
+                        {fmtDataCurta(t.data)}{t.categoria ? ` · ${t.categoria}` : ''}{ehDebit ? ' · clique p/ editar' : ''}
                       </p>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -530,6 +575,56 @@ function GastosConteudo() {
             >
               Ver histórico de faturas em PDF →
             </button>
+          </div>
+        )}
+ 
+        {/* #4: Modal pra trocar a categoria da transacao */}
+        {txEditando && (
+          <div
+            onClick={() => !salvandoCat && setTxEditando(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 50 }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: 'white', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px', maxHeight: '85vh', overflowY: 'auto' }}
+            >
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: COLORS.ink, margin: 0 }}>Mudar categoria</h3>
+              <p style={{ fontSize: '13px', color: COLORS.muted, margin: '2px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {(txEditando.descricao || txEditando.merchant_nome || 'Transação').trim()}
+              </p>
+ 
+              {erroCat && <p style={{ fontSize: '12px', color: COLORS.danger, marginTop: '10px' }}>{erroCat}</p>}
+ 
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+                {CATEGORIAS_CANONICAS.map((cat) => {
+                  const atual = (txEditando.categoria || '').trim() === cat;
+                  return (
+                    <button
+                      key={cat}
+                      onClick={() => !salvandoCat && salvarCategoria(cat)}
+                      disabled={salvandoCat}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '13px 16px', borderRadius: '14px', cursor: salvandoCat ? 'default' : 'pointer',
+                        background: atual ? 'rgba(122,217,183,0.18)' : '#f4f7f5',
+                        border: `1px solid ${atual ? COLORS.primary : '#eef2ef'}`,
+                        textAlign: 'left',
+                      }}
+                    >
+                      <span style={{ fontSize: '15px', fontWeight: 600, color: atual ? COLORS.primaryMid : COLORS.ink }}>{cat}</span>
+                      {atual && <span style={{ fontSize: '12px', fontWeight: 700, color: COLORS.primaryMid }}>✓ atual</span>}
+                    </button>
+                  );
+                })}
+              </div>
+ 
+              <button
+                onClick={() => !salvandoCat && setTxEditando(null)}
+                style={{ marginTop: '16px', width: '100%', padding: '12px', background: 'transparent', border: 'none', color: COLORS.muted, fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                {salvandoCat ? 'Salvando...' : 'Cancelar'}
+              </button>
+            </div>
           </div>
         )}
       </div>

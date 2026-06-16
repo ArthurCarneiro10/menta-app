@@ -115,12 +115,16 @@ export default function DashboardPage() {
           const trinta = new Date();
           trinta.setDate(trinta.getDate() - 30);
           const limite = trinta.toISOString().slice(0, 10);
+          // Teto: ate hoje. Sem isso, parcelas com data futura (que o banco
+          // ja lancou) vazariam pra dentro do filtro e inflariam o total (#6).
+          const hoje = new Date().toISOString().slice(0, 10);
  
           const { data: txs } = await supabase
             .from('transacoes_banco')
             .select('valor, tipo, categoria')
             .eq('user_id', user.id)
-            .gte('data', limite);
+            .gte('data', limite)
+            .lte('data', hoje);
  
           const debits: Transacao[] = (txs || []).filter((t: Transacao) => t.tipo === 'DEBIT');
  
@@ -520,4 +524,3 @@ export default function DashboardPage() {
     </main>
   );
 }
- 

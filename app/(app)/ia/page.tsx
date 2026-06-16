@@ -62,12 +62,15 @@ export default function IAChatPage() {
         const trinta = new Date();
         trinta.setDate(trinta.getDate() - 30);
         const limite = trinta.toISOString().slice(0, 10);
+        // Teto: ate hoje. Parcelas futuras nao entram (#6) - alinha com a dashboard.
+        const hoje = new Date().toISOString().slice(0, 10);
  
         const { data: txs } = await supabase
           .from('transacoes_banco')
           .select('valor, tipo, categoria, descricao, merchant_nome')
           .eq('user_id', user.id)
-          .gte('data', limite);
+          .gte('data', limite)
+          .lte('data', hoje);
  
         const debits = (txs || []).filter((t: { tipo: string | null }) => t.tipo === 'DEBIT');
  
