@@ -4,7 +4,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
-import { Sparkles, Coffee, Car, ShoppingBag, Heart, MoreHorizontal, FileText, Trash2, RefreshCw, Wallet, CreditCard } from 'lucide-react';
+import { Sparkles, Coffee, Car, ShoppingBag, Heart, MoreHorizontal, FileText, Trash2, RefreshCw, Wallet, CreditCard, Search, X } from 'lucide-react';
  
 const COLORS = {
   primary: '#7ad9b7',
@@ -67,12 +67,26 @@ const CATEGORIAS_CANONICAS = [
   'Educação', 'Moradia', 'Serviços', 'Outros',
 ];
  
+// Nomes de mes pra agrupar os gastos futuros (#6)
+const MESES_LONGOS = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+];
+ 
 // Formata data YYYY-MM-DD em DD/MM
 function fmtDataCurta(s: string): string {
   if (!s) return '';
   const partes = s.slice(0, 10).split('-');
   if (partes.length !== 3) return s;
   return `${partes[2]}/${partes[1]}`;
+}
+ 
+// Chave de mes (YYYY-MM) -> rotulo "Agosto 2026" (#6)
+function rotuloMes(chave: string): string {
+  const [ano, mes] = chave.split('-');
+  const idx = parseInt(mes, 10) - 1;
+  if (idx < 0 || idx > 11) return chave;
+  return `${MESES_LONGOS[idx]} ${ano}`;
 }
  
 function GastosConteudo() {
@@ -92,13 +106,22 @@ function GastosConteudo() {
   const [avisoRemover, setAvisoRemover] = useState('');
  
   // ===== Estado: modo Timeline (premium com conexao) =====
-  const [periodo, setPeriodo] = useState<7 | 30 | 90>(30);
+  const [periodo, setPeriodo] = useState<7 | 30>(30); // #7: removido o 90
   const [contas, setContas] = useState<ContaBancaria[]>([]);
   const [contaFiltro, setContaFiltro] = useState<string>('todas');
   const [catFiltro, setCatFiltro] = useState('Todos'); // #3: filtro de categoria no timeline
   const [txs, setTxs] = useState<TransacaoBanco[]>([]);
   const [carregandoTxs, setCarregandoTxs] = useState(false);
   const [temFaturasAntigas, setTemFaturasAntigas] = useState(false);
+ 
+  // #5: busca por texto (descricao/merchant/categoria). Aplica ao apertar enter.
+  const [buscaInput, setBuscaInput] = useState(''); // o que o usuario digita
+  const [busca, setBusca] = useState('');           // o que foi efetivamente buscado
+ 
+  // #6: visao passado (gastos ja feitos) vs futuro (parcelas/gastos futuros por mes)
+  const [visao, setVisao] = useState<'passado' | 'futuro'>('passado');
+  const [txsFuturas, setTxsFuturas] = useState<TransacaoBanco[]>([]);
+  const [carregandoFuturas, setCarregandoFuturas] = useState(false);
  
   // #4: edicao de categoria de uma transacao do banco
   const [txEditando, setTxEditando] = useState<TransacaoBanco | null>(null);
@@ -123,7 +146,9 @@ function GastosConteudo() {
       const dados = await resp.json();
       if (!dados.sucesso) { setErroCat(dados.erro || 'Nao foi possivel atualizar.'); setSalvandoCat(false); return; }
  
+      // atualiza nas duas listas (passado e futuro) por seguranca
       setTxs((prev) => prev.map((t) => (t.id === txEditando.id ? { ...t, categoria: novaCategoria } : t)));
+      setTxsFuturas((prev) => prev.map((t) => (t.id === txEditando.id ? { ...t, categoria: novaCategoria } : t)));
       setTxEditando(null);
       setSalvandoCat(false);
     } catch {
@@ -188,7 +213,7 @@ function GastosConteudo() {
     init();
   }, [router]);
  
-  // Carrega transacoes do banco quando muda periodo (modo timeline)
+  // Carrega transacoes do banco quando muda periodo (modo timeline, visao PASSADO)
   useEffect(() => {
     if (plano !== 'premium' || !temConexao) return;
  
@@ -216,6 +241,39 @@ function GastosConteudo() {
     }
     carregarTxs();
   }, [plano, temConexao, periodo]);
+ 
+  // #6: carrega os gastos FUTUROS (parcelas/assinaturas com data > hoje),
+  // limitado aos proximos 6 meses. Carregado uma vez quando entra no timeline.
+  useEffect(() => {
+    if (plano !== 'premium' || !temConexao) return;
+ 
+    async function carregarFuturas() {
+      setCarregandoFuturas(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+ 
+      const hoje = new Date();
+      const amanha = new Date(hoje);
+      amanha.setDate(amanha.getDate() + 1);
+      const inicioFuturo = amanha.toISOString().slice(0, 10);
+      // teto: 6 meses pra frente
+      const fim = new Date(hoje);
+      fim.setMonth(fim.getMonth() + 6);
+      const limiteFuturo = fim.toISOString().slice(0, 10);
+ 
+      const { data } = await supabase
+        .from('transacoes_banco')
+        .select('id, data, descricao, valor, tipo, categoria, merchant_nome, conta_id')
+        .eq('user_id', user.id)
+        .gte('data', inicioFuturo)
+        .lte('data', limiteFuturo)
+        .order('data', { ascending: true });
+ 
+      setTxsFuturas((data || []) as TransacaoBanco[]);
+      setCarregandoFuturas(false);
+    }
+    carregarFuturas();
+  }, [plano, temConexao]);
  
   // Remove fatura PDF (modo PDF)
   async function removerFatura(f: Fatura) {
@@ -309,9 +367,12 @@ function GastosConteudo() {
   // BRANCH: Premium COM conexao -> modo Timeline
   // =========================================================
   if (plano === 'premium' && temConexao) {
+    // Fonte de dados conforme a visao (#6): passado usa txs, futuro usa txsFuturas
+    const fonte = visao === 'futuro' ? txsFuturas : txs;
+ 
     // Filtra transacoes pela conta selecionada
     const porConta =
-      contaFiltro === 'todas' ? txs : txs.filter((t) => t.conta_id === contaFiltro);
+      contaFiltro === 'todas' ? fonte : fonte.filter((t) => t.conta_id === contaFiltro);
  
     // #3: categorias presentes nas transacoes (debitos), pra montar os chips
     const catsDisponiveis = Array.from(
@@ -324,14 +385,47 @@ function GastosConteudo() {
     const filtrosCategoria = ['Todos', ...catsDisponiveis];
  
     // aplica filtro de categoria (#3) por cima do filtro de conta
-    const txsFiltradas =
+    const aposCategoria =
       catFiltro === 'Todos'
         ? porConta
         : porConta.filter((t) => ((t.categoria || 'Outros').trim() || 'Outros') === catFiltro);
  
+    // #5: aplica a busca por texto (descricao, merchant ou categoria)
+    const termo = busca.trim().toLowerCase();
+    const txsFiltradas = termo === ''
+      ? aposCategoria
+      : aposCategoria.filter((t) => {
+          const desc = (t.descricao || '').toLowerCase();
+          const merch = (t.merchant_nome || '').toLowerCase();
+          const cat = (t.categoria || '').toLowerCase();
+          return desc.includes(termo) || merch.includes(termo) || cat.includes(termo);
+        });
+ 
     // Calcula stats (so DEBITs = gastos)
     const debits = txsFiltradas.filter((t) => t.tipo === 'DEBIT');
     const totalGasto = debits.reduce((acc, t) => acc + Math.abs(Number(t.valor || 0)), 0);
+ 
+    // #6: agrupa por mes quando na visao futuro
+    const gruposPorMes: { chave: string; itens: TransacaoBanco[]; total: number }[] = [];
+    if (visao === 'futuro') {
+      const mapa = new Map<string, TransacaoBanco[]>();
+      for (const t of txsFiltradas) {
+        const chave = t.data.slice(0, 7); // YYYY-MM
+        if (!mapa.has(chave)) mapa.set(chave, []);
+        mapa.get(chave)!.push(t);
+      }
+      for (const [chave, itens] of Array.from(mapa.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+        const total = itens
+          .filter((t) => t.tipo === 'DEBIT')
+          .reduce((acc, t) => acc + Math.abs(Number(t.valor || 0)), 0);
+        gruposPorMes.push({ chave, itens, total });
+      }
+    }
+ 
+    const carregandoVisao = visao === 'futuro' ? carregandoFuturas : carregandoTxs;
+ 
+    function aplicarBusca() { setBusca(buscaInput); }
+    function limparBusca() { setBuscaInput(''); setBusca(''); }
  
     return (
       <div>
@@ -339,15 +433,40 @@ function GastosConteudo() {
         <div style={{ background: COLORS.dark1, padding: '48px 24px 24px', borderRadius: '0 0 28px 28px' }}>
           <h1 style={{ color: 'white', fontSize: '24px', fontWeight: 700, margin: 0 }}>Suas transações</h1>
           <p style={{ color: COLORS.primaryLight, fontSize: '14px', marginTop: '4px' }}>
-            Direto do seu banco · últimos {periodo} dias
+            {visao === 'futuro' ? 'Gastos futuros · próximos 6 meses' : `Direto do seu banco · últimos ${periodo} dias`}
           </p>
         </div>
  
-        {/* Stats */}
+        {/* #6: Chip de visao Passado / Futuro */}
+        <div style={{ padding: '16px 16px 0' }}>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {(['passado', 'futuro'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setVisao(v)}
+                style={{
+                  flex: 1,
+                  padding: '10px 16px',
+                  borderRadius: '999px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  background: visao === v ? COLORS.primary : 'white',
+                  color: visao === v ? COLORS.ink : COLORS.primaryMid,
+                  border: visao === v ? 'none' : '1px solid #e6ebe8',
+                }}
+              >
+                {v === 'passado' ? 'Já gastei' : 'Gastos futuros'}
+              </button>
+            ))}
+          </div>
+        </div>
+ 
+        {/* Stats: no passado mostra total+contagem; no futuro mostra total futuro */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', padding: '16px' }}>
           <div style={{ background: 'white', borderRadius: '16px', padding: '16px', border: '1px solid #eef2ef' }}>
             <p style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: COLORS.primaryMid, margin: 0 }}>
-              Gasto no período
+              {visao === 'futuro' ? 'Total a pagar' : 'Gasto no período'}
             </p>
             <p style={{ fontSize: '22px', fontWeight: 700, color: COLORS.ink, margin: '4px 0 0' }}>
               R$ {fmt(totalGasto)}
@@ -363,32 +482,58 @@ function GastosConteudo() {
           </div>
         </div>
  
-        {/* Chips de periodo */}
-        <div style={{ padding: '4px 16px 0' }}>
-          <p style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: COLORS.muted, marginBottom: '6px' }}>
-            Período
-          </p>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {[7, 30, 90].map((d) => (
-              <button
-                key={d}
-                onClick={() => setPeriodo(d as 7 | 30 | 90)}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: '999px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  background: periodo === d ? COLORS.primary : 'white',
-                  color: periodo === d ? COLORS.ink : COLORS.primaryMid,
-                  border: periodo === d ? 'none' : '1px solid #e6ebe8',
-                }}
-              >
-                {d} dias
+        {/* #5: Barra de busca (lupa) */}
+        <div style={{ padding: '0 16px 4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'white', border: '1px solid #e6ebe8', borderRadius: '999px', padding: '8px 14px' }}>
+            <Search size={16} color={COLORS.muted} />
+            <input
+              value={buscaInput}
+              onChange={(e) => setBuscaInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') aplicarBusca(); }}
+              placeholder="Buscar gasto, loja ou categoria..."
+              style={{ flex: 1, border: 'none', outline: 'none', fontSize: '14px', color: COLORS.ink, background: 'transparent' }}
+            />
+            {buscaInput && (
+              <button onClick={limparBusca} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'grid', placeItems: 'center' }}>
+                <X size={16} color={COLORS.muted} />
               </button>
-            ))}
+            )}
           </div>
+          {busca && (
+            <p style={{ fontSize: '11px', color: COLORS.muted, margin: '6px 4px 0' }}>
+              Buscando por &quot;{busca}&quot; · {txsFiltradas.length} resultado(s)
+            </p>
+          )}
         </div>
+ 
+        {/* Chips de periodo (so na visao PASSADO - #6/#7) */}
+        {visao === 'passado' && (
+          <div style={{ padding: '12px 16px 0' }}>
+            <p style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: COLORS.muted, marginBottom: '6px' }}>
+              Período
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {[7, 30].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setPeriodo(d as 7 | 30)}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '999px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    background: periodo === d ? COLORS.primary : 'white',
+                    color: periodo === d ? COLORS.ink : COLORS.primaryMid,
+                    border: periodo === d ? 'none' : '1px solid #e6ebe8',
+                  }}
+                >
+                  {d} dias
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
  
         {/* #3: Chips de categoria (so aparece se houver categorias) */}
         {filtrosCategoria.length > 1 && (
@@ -473,10 +618,10 @@ function GastosConteudo() {
         {/* Lista de transacoes */}
         <div style={{ padding: '16px' }}>
           <h2 style={{ fontSize: '16px', fontWeight: 700, color: COLORS.ink, marginBottom: '12px' }}>
-            Movimentações
+            {visao === 'futuro' ? 'O que ainda vai cair' : 'Movimentações'}
           </h2>
  
-          {carregandoTxs ? (
+          {carregandoVisao ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {Array.from({ length: 3 }).map((_, i) => (
                 <div
@@ -494,31 +639,69 @@ function GastosConteudo() {
             </div>
           ) : txsFiltradas.length === 0 ? (
             <div style={{ background: 'white', borderRadius: '16px', padding: '24px', textAlign: 'center', border: '1px solid #eef2ef' }}>
-              <p style={{ color: COLORS.ink, fontWeight: 600, margin: 0 }}>Nenhuma movimentação nesse período</p>
-              <p style={{ color: COLORS.muted, fontSize: '12px', marginTop: '4px' }}>
-                Mude o filtro ou sincronize a conta de novo.
+              <p style={{ color: COLORS.ink, fontWeight: 600, margin: 0 }}>
+                {busca
+                  ? 'Nada encontrado pra essa busca'
+                  : visao === 'futuro'
+                  ? 'Nenhum gasto futuro previsto'
+                  : 'Nenhuma movimentação nesse período'}
               </p>
-              <button
-                onClick={() => router.push('/conectar')}
-                style={{
-                  marginTop: '12px',
-                  background: COLORS.primary,
-                  color: COLORS.ink,
-                  border: 'none',
-                  borderRadius: '999px',
-                  padding: '8px 16px',
-                  fontWeight: 700,
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                }}
-              >
-                <RefreshCw size={12} /> Sincronizar
-              </button>
+              <p style={{ color: COLORS.muted, fontSize: '12px', marginTop: '4px' }}>
+                {busca
+                  ? 'Tente outro termo ou limpe a busca.'
+                  : visao === 'futuro'
+                  ? 'Parcelas e assinaturas futuras aparecem aqui.'
+                  : 'Mude o filtro ou sincronize a conta de novo.'}
+              </p>
+            </div>
+          ) : visao === 'futuro' ? (
+            /* #6: visao futuro -> agrupada por mes */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {gruposPorMes.map((g) => (
+                <div key={g.chave}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <h3 style={{ fontSize: '13px', fontWeight: 700, color: COLORS.primaryMid, margin: 0 }}>
+                      {rotuloMes(g.chave)}
+                    </h3>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: COLORS.ink }}>
+                      R$ {fmt(g.total)}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {g.itens.map((t) => {
+                      const Icon = iconePorCategoria(t.categoria || '');
+                      const valor = Math.abs(Number(t.valor || 0));
+                      const ehDebit = t.tipo === 'DEBIT';
+                      const desc = (t.descricao || t.merchant_nome || 'Sem descrição').trim();
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => { if (ehDebit) { setErroCat(''); setTxEditando(t); } }}
+                          style={{ background: 'white', borderRadius: '16px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid #eef2ef', cursor: ehDebit ? 'pointer' : 'default' }}
+                        >
+                          <div style={{ width: '40px', height: '40px', borderRadius: '12px', display: 'grid', placeItems: 'center', background: '#f4f7f5', flexShrink: 0 }}>
+                            <Icon size={18} color={COLORS.primaryMid} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontWeight: 600, fontSize: '14px', color: COLORS.ink, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {desc}
+                            </p>
+                            <p style={{ fontSize: '11px', color: COLORS.muted, margin: '2px 0 0' }}>
+                              {fmtDataCurta(t.data)}{t.categoria ? ` · ${t.categoria}` : ''}
+                            </p>
+                          </div>
+                          <span style={{ fontWeight: 700, fontSize: '14px', color: COLORS.ink, flexShrink: 0 }}>
+                            R$ {fmt(valor)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
+            /* visao passado -> lista corrida */
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {txsFiltradas.map((t) => {
                 const Icon = iconePorCategoria(t.categoria || '');
