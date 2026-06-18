@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
-import { RefreshCw, Trash2, Plus } from 'lucide-react';
+import { RefreshCw, Trash2, Plus, FileText } from 'lucide-react';
 import BloqueioPremium from '@/components/BloqueioPremium';
  
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -528,6 +528,16 @@ export default function ConectarPage() {
               >
                 {sincronizando ? 'Sincronizando...' : 'Sincronizar transações agora'}
               </button>
+ 
+              {/* #4: Premium tambem pode analisar fatura PDF (usabilidade Free preservada) */}
+              <button
+                onClick={() => router.push('/upload')}
+                disabled={ocupado}
+                className="w-full mt-3 px-6 py-3 rounded-full text-sm font-semibold bg-white/5 text-white border border-white/10 hover:bg-white/10 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2"
+              >
+                <FileText size={14} />
+                Analisar fatura PDF
+              </button>
             </>
           ) : (
             <div className="space-y-2">
@@ -547,6 +557,16 @@ export default function ConectarPage() {
               >
                 <RefreshCw size={14} className={sincronizando ? 'animate-spin' : ''} />
                 {sincronizando ? 'Sincronizando...' : 'Sincronizar tudo'}
+              </button>
+ 
+              {/* #4: Premium tambem pode analisar fatura PDF (usabilidade Free preservada) */}
+              <button
+                onClick={() => router.push('/upload')}
+                disabled={ocupado}
+                className="w-full px-6 py-3 rounded-full text-sm font-semibold bg-white/5 text-white border border-white/10 hover:bg-white/10 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2"
+              >
+                <FileText size={14} />
+                Analisar fatura PDF
               </button>
             </div>
           )}
