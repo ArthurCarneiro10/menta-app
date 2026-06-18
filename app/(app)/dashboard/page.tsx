@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, ChevronDown } from 'lucide-react';
 import SinoNotificacoes from '@/components/SinoNotificacoes';
 import OnboardingModal from '@/components/OnboardingModal';
  
@@ -56,6 +56,9 @@ export default function DashboardPage() {
  
   const [saldoBancario, setSaldoBancario] = useState(0);
   const [numContasBancarias, setNumContasBancarias] = useState(0);
+  // #1: saldo por banco (so contas BANK), e se o detalhamento esta aberto
+  const [saldoPorBanco, setSaldoPorBanco] = useState<{ banco: string; saldo: number }[]>([]);
+  const [saldoExpandido, setSaldoExpandido] = useState(false);
  
   const [temFaturasAntigas, setTemFaturasAntigas] = useState(false);
  
@@ -99,18 +102,34 @@ export default function DashboardPage() {
         if (conectado) {
           const { data: contasData } = await supabase
             .from('contas_bancarias')
-            .select('saldo, tipo')
+            .select('saldo, tipo, connections(connector_name)')
             .eq('user_id', user.id);
  
-          const bankComSaldo: ContaBancaria[] = (contasData || []).filter(
-            (c: ContaBancaria) => c.tipo === 'BANK' && c.saldo !== null
+          const bankComSaldo = (contasData || []).filter(
+            (c: { tipo: string | null; saldo: number | string | null }) =>
+              c.tipo === 'BANK' && c.saldo !== null
           );
           const saldoTotal = bankComSaldo.reduce(
-            (acc, c) => acc + Number(c.saldo || 0),
+            (acc: number, c: { saldo: number | string | null }) => acc + Number(c.saldo || 0),
             0
           );
           setSaldoBancario(saldoTotal);
           setNumContasBancarias(bankComSaldo.length);
+ 
+          // #1: agrupa o saldo das contas BANK por banco (connector_name).
+          const mapaBanco = new Map<string, number>();
+          for (const c of bankComSaldo as Array<{ saldo: number | string | null; connections: unknown }>) {
+            const conn = Array.isArray(c.connections) ? c.connections[0] : c.connections;
+            const nomeBanco = (conn && typeof conn === 'object' && 'connector_name' in conn
+              ? String((conn as { connector_name?: string }).connector_name || '')
+              : '').trim() || 'Banco';
+            mapaBanco.set(nomeBanco, (mapaBanco.get(nomeBanco) || 0) + Number(c.saldo || 0));
+          }
+          setSaldoPorBanco(
+            Array.from(mapaBanco.entries())
+              .map(([banco, saldo]) => ({ banco, saldo }))
+              .sort((a, b) => b.saldo - a.saldo)
+          );
  
           const trinta = new Date();
           trinta.setDate(trinta.getDate() - 30);
@@ -243,6 +262,46 @@ export default function DashboardPage() {
     );
   }
  
+  // #1: detalhamento do saldo por banco (aparece ao expandir)
+  function DetalheSaldo() {
+    if (!saldoExpandido || saldoPorBanco.length <= 1) return null;
+    return (
+      <div className="rounded-2xl mt-2 px-4 py-1 bg-white/5 border border-white/10">
+        {saldoPorBanco.map((b) => (
+          <div key={b.banco} className="flex items-center justify-between py-2">
+            <span className="text-white/85 text-sm font-medium">{b.banco}</span>
+            <span className={`text-sm font-bold ${b.saldo < 0 ? 'text-red-300' : 'text-white'}`}>
+              R$ {b.saldo < 0 ? '-' : ''}{fmt(b.saldo)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+ 
+  // Subtitulo do saldo: vira botao "ver por banco" quando ha mais de um banco
+  function SubtituloSaldo({ sufixo }: { sufixo: string }) {
+    if (saldoPorBanco.length > 1) {
+      return (
+        <button
+          onClick={() => setSaldoExpandido((v) => !v)}
+          className="flex items-center gap-1 mt-1 text-white/40 hover:text-white/70 transition-colors cursor-pointer bg-transparent border-none p-0"
+        >
+          <span className="text-[11px]">
+            {numContasBancarias} conta{numContasBancarias !== 1 ? 's' : ''} · ver por banco
+          </span>
+          <ChevronDown size={12} className={saldoExpandido ? 'rotate-180' : ''} />
+        </button>
+      );
+    }
+    return (
+      <p className="text-[11px] text-white/40 mt-1">
+        {numContasBancarias} conta{numContasBancarias !== 1 ? 's' : ''} bancária
+        {numContasBancarias !== 1 ? 's' : ''}{sufixo}
+      </p>
+    );
+  }
+ 
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-16">
       <OnboardingModal />
@@ -285,7 +344,8 @@ export default function DashboardPage() {
  
         {/* =========== HERO BLOCO: Saldo + Gasto lado a lado (sm:cols-2) =========== */}
         {temSaldoCard && temGastoCard && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          <div className="mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* Saldo */}
             <div
               className="rounded-3xl overflow-hidden relative p-5"
@@ -308,10 +368,7 @@ export default function DashboardPage() {
                   ,{fmt(saldoAbs).split(',')[1]}
                 </span>
               </div>
-              <p className="text-[11px] text-white/40 mt-1">
-                {numContasBancarias} conta{numContasBancarias !== 1 ? 's' : ''} bancária
-                {numContasBancarias !== 1 ? 's' : ''}
-              </p>
+              <SubtituloSaldo sufixo="" />
             </div>
  
             {/* Gasto */}
@@ -333,11 +390,14 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
+          <DetalheSaldo />
+          </div>
         )}
  
         {/* Saldo SOLO (sem gasto recente) - mantem comportamento original */}
         {temSaldoCard && !temGastoCard && (
-          <div className="rounded-3xl p-5 mb-4" style={CARD_GRADIENT_STYLE}>
+          <div className="mb-4">
+          <div className="rounded-3xl p-5" style={CARD_GRADIENT_STYLE}>
             <p className="text-xs uppercase tracking-widest font-bold text-[#7cdbb9]">
               Saldo em contas
             </p>
@@ -355,11 +415,9 @@ export default function DashboardPage() {
                 ,{fmt(saldoAbs).split(',')[1]}
               </span>
             </div>
-            <p className="text-xs text-white/40 mt-1">
-              {numContasBancarias} conta{numContasBancarias !== 1 ? 's' : ''} bancária
-              {numContasBancarias !== 1 ? 's' : ''} conectada
-              {numContasBancarias !== 1 ? 's' : ''}
-            </p>
+            <SubtituloSaldo sufixo=" conectada" />
+          </div>
+          <DetalheSaldo />
           </div>
         )}
  
