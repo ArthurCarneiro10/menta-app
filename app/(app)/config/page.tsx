@@ -503,7 +503,7 @@ export default function ConfigPage() {
                   Ver planos
                 </a>
                 <p className="text-white/50 text-xs text-center mt-3">
-                  A partir de R$ 29,90/mês · 7 dias grátis
+                  A partir de R$ 29,90/mês 
                 </p>
               </div>
             </div>

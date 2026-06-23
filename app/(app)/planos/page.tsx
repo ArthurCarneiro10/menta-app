@@ -124,7 +124,7 @@ export default function PlanosPage() {
         </header>
  
         <p className="text-white/60 text-sm mb-8 leading-relaxed">
-          Conecte seus bancos, ative a IA financeira e veja tudo em tempo real. 7 dias grátis em ambos os planos.
+          Conecte seus bancos, ative a IA financeira e veja tudo em tempo real.
         </p>
  
         {/* Cards */}
@@ -141,7 +141,7 @@ export default function PlanosPage() {
                 <span className="text-white/60 text-sm">/mês</span>
               </div>
               <p className="text-white/40 text-xs mt-1">
-                7 dias grátis, cancele quando quiser
+                 Cancele quando quiser
               </p>
             </div>
  
@@ -183,7 +183,7 @@ export default function PlanosPage() {
                 R$ 358,80 cobrado anualmente
               </p>
               <p className="text-white/40 text-xs">
-                7 dias grátis, cancele quando quiser
+                Cancele quando quiser
               </p>
             </div>
  
