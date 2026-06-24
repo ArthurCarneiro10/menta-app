@@ -9,9 +9,9 @@
  * - Assinatura: https://www.mercadopago.com.br/developers/en/reference/subscriptions/_preapproval/post
  * - Authorized payment: https://www.mercadopago.com.br/developers/en/reference/subscriptions/_authorized_payments_id/get
  */
- 
+
 const MP_API_BASE = 'https://api.mercadopago.com';
- 
+
 function getAccessToken(): string {
   const token = process.env.MP_ACCESS_TOKEN;
   if (!token) {
@@ -19,18 +19,18 @@ function getAccessToken(): string {
   }
   return token;
 }
- 
+
 // =========================================================================
 // Tipos
 // =========================================================================
- 
+
 export type MPFrequencyType = 'months' | 'days';
- 
+
 export type MPFreeTrial = {
   frequency: number;
   frequency_type: MPFrequencyType;
 };
- 
+
 export type MPAutoRecurring = {
   frequency: number;
   frequency_type: MPFrequencyType;
@@ -41,7 +41,7 @@ export type MPAutoRecurring = {
   transaction_amount: number;
   currency_id: 'BRL';
 };
- 
+
 export type MPPreapprovalPlanCreate = {
   reason: string;
   auto_recurring: MPAutoRecurring;
@@ -51,7 +51,7 @@ export type MPPreapprovalPlanCreate = {
     payment_methods?: { id?: string }[];
   };
 };
- 
+
 export type MPPreapprovalPlanResponse = {
   id: string;
   application_id: number;
@@ -63,9 +63,9 @@ export type MPPreapprovalPlanResponse = {
   last_modified: string;
   auto_recurring: MPAutoRecurring;
 };
- 
+
 export type MPPreapprovalStatus = 'pending' | 'authorized' | 'paused' | 'cancelled';
- 
+
 export type MPPreapprovalCreate = {
   // Pode ser criada de duas formas:
   // (A) Com plano associado: requer preapproval_plan_id + card_token_id + status='authorized'
@@ -80,7 +80,7 @@ export type MPPreapprovalCreate = {
   notification_url?: string;
   status?: 'authorized' | 'pending';
 };
- 
+
 export type MPPreapprovalResponse = {
   id: string;
   version: number;
@@ -100,7 +100,7 @@ export type MPPreapprovalResponse = {
   last_modified: string;
   auto_recurring: MPAutoRecurring;
 };
- 
+
 /**
  * Resposta do endpoint /authorized_payments/{id}.
  *
@@ -122,44 +122,44 @@ export type MPAuthorizedPaymentResponse = {
     status_detail?: string;
   };
 };
- 
+
 // =========================================================================
 // Cliente HTTP
 // =========================================================================
- 
+
 async function mpFetch<T>(
   endpoint: string,
   options: { method?: string; body?: unknown; idempotencyKey?: string } = {}
 ): Promise<T> {
   const { method = 'GET', body, idempotencyKey } = options;
- 
+
   const headers: Record<string, string> = {
     Authorization: `Bearer ${getAccessToken()}`,
     'Content-Type': 'application/json',
   };
- 
+
   if (idempotencyKey) {
     headers['X-Idempotency-Key'] = idempotencyKey;
   }
- 
+
   const res = await fetch(`${MP_API_BASE}${endpoint}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
- 
+
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`MP API erro ${res.status} em ${method} ${endpoint}: ${errorText}`);
   }
- 
+
   return res.json() as Promise<T>;
 }
- 
+
 // =========================================================================
 // Preapproval Plans (molde do plano)
 // =========================================================================
- 
+
 export async function criarPreapprovalPlan(
   data: MPPreapprovalPlanCreate
 ): Promise<MPPreapprovalPlanResponse> {
@@ -168,15 +168,15 @@ export async function criarPreapprovalPlan(
     body: data,
   });
 }
- 
+
 export async function getPreapprovalPlan(id: string): Promise<MPPreapprovalPlanResponse> {
   return mpFetch<MPPreapprovalPlanResponse>(`/preapproval_plan/${id}`);
 }
- 
+
 // =========================================================================
 // Preapprovals (assinatura individual)
 // =========================================================================
- 
+
 export async function criarPreapproval(
   data: MPPreapprovalCreate
 ): Promise<MPPreapprovalResponse> {
@@ -186,18 +186,18 @@ export async function criarPreapproval(
     idempotencyKey: crypto.randomUUID(),
   });
 }
- 
+
 export async function getPreapproval(id: string): Promise<MPPreapprovalResponse> {
   return mpFetch<MPPreapprovalResponse>(`/preapproval/${id}`);
 }
- 
+
 export async function cancelarPreapproval(id: string): Promise<MPPreapprovalResponse> {
   return mpFetch<MPPreapprovalResponse>(`/preapproval/${id}`, {
     method: 'PUT',
     body: { status: 'cancelled' },
   });
 }
- 
+
 /**
  * Consulta uma cobranca recorrente (authorized payment) pelo id.
  *
@@ -210,14 +210,24 @@ export async function getAuthorizedPayment(
 ): Promise<MPAuthorizedPaymentResponse> {
   return mpFetch<MPAuthorizedPaymentResponse>(`/authorized_payments/${id}`);
 }
- 
+
 // =========================================================================
 // Constantes de produto
 // =========================================================================
- 
+
+// Niveis pagos e ciclos de cobranca
+export type NivelPago = 'premium' | 'max';
+export type CicloAssinatura = 'mensal' | 'anual';
+
+// Precos por nivel e ciclo. Anual = "2 meses gratis".
+// Acesso: PRECOS.premium.mensal, PRECOS.max.anual, etc.
 export const PRECOS = {
-  MENSAL: 39.90,
-  ANUAL: 358.80, // 12 * 29.90 - economia de 25% vs mensal
+  premium: { mensal: 29.90, anual: 299.00 },
+  max: { mensal: 49.90, anual: 499.00 },
 } as const;
- 
-export const TRIAL_DIAS = 7;
+
+// Nome amigavel do nivel (usado no "reason" da assinatura e na UI).
+export const NOME_NIVEL: Record<NivelPago, string> = {
+  premium: 'Premium',
+  max: 'Max',
+};

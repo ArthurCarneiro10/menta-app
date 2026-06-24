@@ -12,7 +12,7 @@
  */
  
 // ===== MODELO DE IA =====
-const MODELO_IA = 'anthropic/claude-sonnet-4.6';
+const MODELO_IA = 'anthropic/claude-haiku-4.5';
 // =========================
  
 // Teto de caracteres do texto da fatura enviado pra IA. O Haiku aguenta bem

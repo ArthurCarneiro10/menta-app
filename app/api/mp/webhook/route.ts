@@ -15,6 +15,7 @@
  *     qualquer outra viva do mesmo usuario (anti cobranca dupla).
  *   - paused (cartao falhou) aplica grace de 30 dias com notificacao propria.
  *   - Recuperacao automatica: paused -> authorized zera as flags via ativarPremium.
+ *   - Ativa o nivel certo (premium ou max) lido da tabela assinaturas.
  *
  * IMPORTANTE: MP nao consegue chamar localhost. Pra testar este endpoint
  * voce precisa ter o app deployado em URL HTTPS publica (Vercel).
@@ -24,7 +25,7 @@
  *   MP_WEBHOOK_STRICT=true    -> exige HMAC valido (rejeita com 401 se falhar)
  *   MP_WEBHOOK_SECRET=...     -> secret do dashboard MP, usado pra validar HMAC
  */
- 
+
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -35,16 +36,16 @@ import {
   marcarPausaPremium,
 } from '@/lib/premium';
 import { cancelarAssinaturasVivas } from '@/lib/assinaturas';
- 
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
- 
+
 const VERBOSE = process.env.MP_WEBHOOK_VERBOSE === 'true';
 const STRICT = process.env.MP_WEBHOOK_STRICT === 'true';
 const WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || '';
- 
+
 export async function POST(request: Request) {
   try {
     // ===== Le o body cru (necessario pra HMAC validar a mesma string que MP assinou) =====
@@ -55,24 +56,24 @@ export async function POST(request: Request) {
     } catch {
       console.warn('[mp-webhook] body nao eh JSON valido');
     }
- 
+
     // MP usa tanto "type" quanto "topic" em diferentes endpoints
     const eventType: string =
       (body.type as string) || (body.topic as string) || (body.action as string) || 'unknown';
     const resourceId: string | undefined =
       ((body.data as { id?: string } | undefined)?.id) || (body.resource as string | undefined);
- 
+
     // Headers de assinatura
     const xSignature = request.headers.get('x-signature') || '';
     const xRequestId = request.headers.get('x-request-id') || '';
- 
+
     console.log(`[mp-webhook] event=${eventType} resource=${resourceId}`);
- 
+
     if (VERBOSE) {
       console.log('[mp-webhook] body completo:', bodyText);
       console.log(`[mp-webhook] headers x-signature=${xSignature} x-request-id=${xRequestId}`);
     }
- 
+
     // ===== HMAC validation =====
     // STRICT off  -> nao valida (modo dev/teste)
     // STRICT on + sem secret -> nao valida mas avisa (config incompleta)
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
           resourceId: resourceId || '',
           secret: WEBHOOK_SECRET,
         });
- 
+
         if (!validacao.valido) {
           console.warn(`[mp-webhook] HMAC invalido: ${validacao.motivo}`);
           return NextResponse.json(
@@ -95,18 +96,18 @@ export async function POST(request: Request) {
             { status: 401 }
           );
         }
- 
+
         if (VERBOSE) {
           console.log('[mp-webhook] HMAC valido');
         }
       }
     }
- 
+
     if (!resourceId) {
       console.warn('[mp-webhook] body sem data.id, ignorando');
       return NextResponse.json({ recebido: true });
     }
- 
+
     // ===== Roteamento por tipo =====
     if (
       eventType === 'subscription_preapproval' ||
@@ -118,7 +119,7 @@ export async function POST(request: Request) {
     } else {
       console.log(`[mp-webhook] tipo nao tratado: ${eventType}`);
     }
- 
+
     return NextResponse.json({ recebido: true });
   } catch (e) {
     console.error('[mp-webhook] erro processando:', e);
@@ -127,11 +128,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ recebido: true, erro_interno: true });
   }
 }
- 
+
 // =========================================================================
 // HMAC validation
 // =========================================================================
- 
+
 /**
  * Valida a assinatura HMAC enviada pelo Mercado Pago.
  *
@@ -148,11 +149,11 @@ function validarAssinaturaMP(params: {
   secret: string;
 }): { valido: boolean; motivo?: string } {
   const { xSignature, xRequestId, resourceId, secret } = params;
- 
+
   if (!xSignature || !xRequestId || !resourceId) {
     return { valido: false, motivo: 'headers ou data.id ausentes' };
   }
- 
+
   // Extrai ts e v1 do header x-signature
   let ts = '';
   let hashRecebido = '';
@@ -163,18 +164,18 @@ function validarAssinaturaMP(params: {
     if (k === 'ts') ts = v || '';
     else if (k === 'v1') hashRecebido = v || '';
   }
- 
+
   if (!ts || !hashRecebido) {
     return { valido: false, motivo: 'x-signature sem ts ou v1' };
   }
- 
+
   // Manifest e hash
   const manifest = `id:${resourceId};request-id:${xRequestId};ts:${ts};`;
   const hashCalculado = crypto
     .createHmac('sha256', secret)
     .update(manifest)
     .digest('hex');
- 
+
   // Comparacao timing-safe (protege contra timing attacks)
   try {
     const a = Buffer.from(hashCalculado, 'hex');
@@ -193,42 +194,46 @@ function validarAssinaturaMP(params: {
     };
   }
 }
- 
+
 // =========================================================================
 // Helpers
 // =========================================================================
- 
+
 async function processarPreapproval(preapprovalId: string): Promise<void> {
   // Consulta status atualizado direto no MP (nao confia no body do webhook)
   const preapproval = await getPreapproval(preapprovalId);
   const userId = preapproval.external_reference;
- 
+
   if (!userId) {
     console.warn(
       `[mp-webhook] preapproval ${preapprovalId} sem external_reference - ignorado`
     );
     return;
   }
- 
-  // Pega plano_tipo da tabela assinaturas (foi salvo quando criamos a preapproval).
-  // Fallback: infere pela frequencia.
+
+  // Pega plano_tipo (ciclo) e nivel da tabela assinaturas (salvos quando criamos
+  // a preapproval). Fallback do ciclo: infere pela frequencia. Fallback do
+  // nivel: 'premium'.
   let planoTipo: 'mensal' | 'anual' = 'mensal';
   const { data: assinaturaExistente } = await supabase
     .from('assinaturas')
-    .select('plano_tipo')
+    .select('plano_tipo, nivel')
     .eq('mp_preapproval_id', preapprovalId)
     .maybeSingle();
- 
+
   if (assinaturaExistente?.plano_tipo === 'anual' || assinaturaExistente?.plano_tipo === 'mensal') {
     planoTipo = assinaturaExistente.plano_tipo;
   } else if (preapproval.auto_recurring.frequency >= 12) {
     planoTipo = 'anual';
   }
- 
+
+  const nivel: 'premium' | 'max' =
+    assinaturaExistente?.nivel === 'max' ? 'max' : 'premium';
+
   console.log(
-    `[mp-webhook] preapproval=${preapprovalId} user=${userId} status=${preapproval.status} plano=${planoTipo}`
+    `[mp-webhook] preapproval=${preapprovalId} user=${userId} status=${preapproval.status} plano=${planoTipo} nivel=${nivel}`
   );
- 
+
   // ===== Upsert na tabela assinaturas (espelho do MP) =====
   const { error: upsertError } = await supabase
     .from('assinaturas')
@@ -238,22 +243,23 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
         mp_preapproval_id: preapproval.id,
         mp_preapproval_plan_id: preapproval.preapproval_plan_id || '',
         plano_tipo: planoTipo,
+        nivel,
         valor: preapproval.auto_recurring.transaction_amount,
         status: preapproval.status,
         proximo_pagamento: preapproval.next_payment_date || null,
       },
       { onConflict: 'mp_preapproval_id' }
     );
- 
+
   if (upsertError) {
     console.error(`[mp-webhook] erro upsert assinaturas:`, upsertError);
   }
- 
+
   // ===== Sincroniza profiles.plano com o status MP =====
   if (preapproval.status === 'authorized') {
-    await ativarPremium(userId, supabase);
-    console.log(`[mp-webhook] user ${userId} virou Premium`);
- 
+    await ativarPremium(userId, supabase, nivel);
+    console.log(`[mp-webhook] user ${userId} virou ${nivel}`);
+
     // CURA: cancela qualquer outra assinatura viva do user (anti cobranca dupla).
     // Preserva a atual via `exceto`. Tolerante a falha.
     try {
@@ -274,8 +280,8 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
       .select('plano, cancelado_em')
       .eq('id', userId)
       .single();
- 
-    if (perfil?.plano === 'premium' || !perfil?.cancelado_em) {
+
+    if (perfil?.plano === 'premium' || perfil?.plano === 'max' || !perfil?.cancelado_em) {
       await marcarCancelamentoPremium(userId, supabase);
       console.log(`[mp-webhook] user ${userId} cancelado, grace de 30 dias iniciado`);
     } else {
@@ -289,8 +295,8 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
       .select('plano, cancelado_em')
       .eq('id', userId)
       .single();
- 
-    if (perfil?.plano === 'premium' || !perfil?.cancelado_em) {
+
+    if (perfil?.plano === 'premium' || perfil?.plano === 'max' || !perfil?.cancelado_em) {
       await marcarPausaPremium(userId, supabase);
       console.log(`[mp-webhook] user ${userId} pausado (pagamento falhou), grace iniciado`);
     } else {
@@ -300,7 +306,7 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
     console.log(`[mp-webhook] user ${userId} ainda pending (cadastrando cartao)`);
   }
 }
- 
+
 /**
  * Processa o evento subscription_authorized_payment (cobranca recorrente).
  *
@@ -310,23 +316,23 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
  */
 async function processarAuthorizedPayment(authorizedPaymentId: string): Promise<void> {
   const ap = await getAuthorizedPayment(authorizedPaymentId);
- 
+
   if (!ap.preapproval_id) {
     console.warn(
       `[mp-webhook] authorized_payment ${authorizedPaymentId} sem preapproval_id - ignorado`
     );
     return;
   }
- 
+
   console.log(
     `[mp-webhook] cobranca recorrente (payment=${authorizedPaymentId} status=${ap.payment?.status || ap.status || '?'}) -> ressincronizando preapproval ${ap.preapproval_id}`
   );
- 
+
   // Reusa todo o fluxo de sincronizacao: vai reconsultar o MP, atualizar
-  // status + proximo_pagamento, e reativar Premium se preciso.
+  // status + proximo_pagamento, e reativar o plano se preciso.
   await processarPreapproval(ap.preapproval_id);
 }
- 
+
 // GET pra status/debug
 export async function GET() {
   return NextResponse.json({

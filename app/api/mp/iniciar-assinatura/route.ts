@@ -2,23 +2,26 @@
  * Inicia o fluxo de assinatura no Mercado Pago.
  *
  * 1. Autentica usuario via JWT
- * 2. Verifica se nao eh Premium (nao deixa duplicar)
+ * 2. Verifica se nao tem plano pago ativo (nao deixa duplicar)
  * 3. PREVENCAO: cancela pending antigas pra nao empilhar (anti cobranca dupla)
  * 4. Cria uma preapproval no MP com status 'pending' (sem cartao definido ainda)
- * 5. Salva no DB como pending
+ * 5. Salva no DB como pending (com o nivel comprado: premium ou max)
  * 6. Retorna init_point - frontend redireciona pra essa URL
  *
- * O usuario vai pro checkout do MP, cadastra cartao, e aprova. Quando isso
- * acontece, MP dispara webhook pra /api/mp/webhook que entao marca o usuario
- * como Premium (e cura quaisquer duplicadas remanescentes).
- *
- * Body: { plano: 'mensal' | 'anual' }
+ * Body: { nivel: 'premium' | 'max', ciclo: 'mensal' | 'anual' }
+ *   (compat: aceita o campo antigo 'plano' como ciclo, e nivel default 'premium')
  * Header: Authorization: Bearer <jwt>
  */
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { criarPreapproval, PRECOS } from '@/lib/mercadopago';
+import {
+  criarPreapproval,
+  PRECOS,
+  NOME_NIVEL,
+  type NivelPago,
+  type CicloAssinatura,
+} from '@/lib/mercadopago';
 import { cancelarAssinaturasVivas } from '@/lib/assinaturas';
 
 const supabase = createClient(
@@ -52,16 +55,19 @@ export async function POST(request: Request) {
       );
     }
 
-    // ===== Confere se ja eh Premium =====
+    // ===== Confere se ja tem plano pago ativo =====
+    // Bloqueia se ja eh premium OU max. Trocar de um plano pago pra outro
+    // (upgrade/downgrade) eh uma feature separada - aqui so tratamos
+    // free -> pago.
     const { data: perfil } = await supabase
       .from('profiles')
       .select('plano')
       .eq('id', user.id)
       .single();
 
-    if (perfil?.plano === 'premium') {
+    if (perfil?.plano === 'premium' || perfil?.plano === 'max') {
       return NextResponse.json(
-        { erro: 'Voce ja tem uma assinatura ativa' },
+        { erro: 'Voce ja tem uma assinatura ativa.' },
         { status: 400 }
       );
     }
@@ -91,22 +97,26 @@ export async function POST(request: Request) {
       console.error('[iniciar-assinatura] erro limpando pending antigas:', e);
     }
 
-    // ===== Body =====
+    // ===== Body: nivel (premium/max) + ciclo (mensal/anual) =====
     const body = await request.json().catch(() => ({}));
-    const planoTipo: 'mensal' | 'anual' =
-      body.plano === 'anual' ? 'anual' : 'mensal';
 
-    const valor = planoTipo === 'anual' ? PRECOS.ANUAL : PRECOS.MENSAL;
-    const frequency = planoTipo === 'anual' ? 12 : 1;
+    const nivel: NivelPago = body.nivel === 'max' ? 'max' : 'premium';
+    // Compat: aceita 'ciclo' (novo) ou 'plano' (antigo) como o ciclo.
+    const cicloRaw = body.ciclo || body.plano;
+    const ciclo: CicloAssinatura = cicloRaw === 'anual' ? 'anual' : 'mensal';
+
+    const valor = PRECOS[nivel][ciclo];
+    const frequency = ciclo === 'anual' ? 12 : 1;
+    const nomeCiclo = ciclo === 'anual' ? 'Anual' : 'Mensal';
 
     // ===== Cria preapproval no MP (sem plano associado) =====
     // Status 'pending' significa: aguardando o usuario completar o cadastro
     // do cartao no checkout do MP. Quando ele completar, MP autoriza e
     // dispara webhook pra /api/mp/webhook.
-    // SEM free_trial: a cobranca ocorre na primeira fatura imediatamente
-    // apos o cadastro do cartao (sem periodo gratuito).
+    // SEM free_trial: a primeira cobranca acontece assim que o cartao eh
+    // autorizado, sem periodo gratuito.
     const preapproval = await criarPreapproval({
-      reason: `Menta Premium - ${planoTipo === 'anual' ? 'Anual' : 'Mensal'}`,
+      reason: `Menta ${NOME_NIVEL[nivel]} - ${nomeCiclo}`,
       payer_email: user.email,
       external_reference: user.id,
       back_url: `${APP_URL}/config?assinatura=ok`,
@@ -120,7 +130,7 @@ export async function POST(request: Request) {
       status: 'pending',
     });
 
-    // ===== Salva no DB (status pending) =====
+    // ===== Salva no DB (status pending, com o nivel comprado) =====
     const { error: upsertError } = await supabase
       .from('assinaturas')
       .upsert(
@@ -128,7 +138,8 @@ export async function POST(request: Request) {
           user_id: user.id,
           mp_preapproval_id: preapproval.id,
           mp_preapproval_plan_id: '', // nao usamos plano associado
-          plano_tipo: planoTipo,
+          plano_tipo: ciclo, // 'mensal' | 'anual'
+          nivel, // 'premium' | 'max'
           valor,
           status: 'pending',
         },

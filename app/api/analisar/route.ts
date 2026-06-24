@@ -75,7 +75,7 @@ export async function POST(request: Request) {
       .eq('id', user.id)
       .single();
  
-    if (perfil?.plano !== 'premium' && !ehReanalise) {
+    if (perfil?.plano !== 'premium' && perfil?.plano !== 'max' && !ehReanalise) {
       const jaAnalisadas = await contarAnalisesFeitas(user.id, supabase);
       if (jaAnalisadas >= LIMITE_ANALISES_FREE) {
         return NextResponse.json(

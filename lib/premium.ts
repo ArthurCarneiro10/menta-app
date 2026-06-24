@@ -1,7 +1,7 @@
 /**
- * Logica compartilhada de gestao do estado Premium.
+ * Logica compartilhada de gestao do estado dos planos pagos.
  *
- * Centraliza as transicoes Free <-> Premium pra evitar duplicacao entre
+ * Centraliza as transicoes Free <-> Premium/Max pra evitar duplicacao entre
  * a rota de cancelamento do usuario, o webhook do MP, e a logica de
  * reativacao no futuro.
  *
@@ -9,41 +9,53 @@
  * cancela no MP eh quem chama essa funcao (ex: /api/cancelar-premium
  * cancela primeiro, dai chama marcarCancelamentoPremium).
  */
- 
+
 import type { SupabaseClient } from '@supabase/supabase-js';
- 
+
 export const DIAS_GRACE = 30;
- 
+
+// Niveis pagos que o ativarPremium aceita.
+export type NivelPago = 'premium' | 'max';
+
 /**
- * Marca o usuario como Premium ativo.
+ * Marca o usuario como plano pago ativo (premium OU max, conforme comprado).
  * Limpa qualquer flag de cancelamento pendente (caso esteja reativando
  * durante o grace period). Isso tambem cobre a recuperacao de uma pausa
  * por falha de pagamento: cartao volta -> authorized -> flags zeradas.
+ *
+ * O parametro `nivel` define o que vai no profiles.plano. Default 'premium'
+ * pra compatibilidade com chamadas antigas.
  */
 export async function ativarPremium(
   userId: string,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  nivel: NivelPago = 'premium'
 ): Promise<void> {
   await supabase
     .from('profiles')
     .update({
-      plano: 'premium',
+      plano: nivel,
       cancelado_em: null,
       dados_apagar_em: null,
     })
     .eq('id', userId);
- 
+
+  const nome = nivel === 'max' ? 'Max' : 'Premium';
+  const mensagem =
+    nivel === 'max'
+      ? 'Sua assinatura Max foi confirmada. Aproveite o Open Finance e todas as funcionalidades do Menta.'
+      : 'Sua assinatura Premium foi confirmada. Agora voce tem analise de faturas e IA ilimitadas no Menta.';
+
   await supabase.from('notificacoes').insert({
     user_id: userId,
     tipo: 'premium_ativado',
-    titulo: 'Premium ativado!',
-    mensagem:
-      'Sua assinatura foi confirmada. Aproveite o Open Finance e todas as funcionalidades Premium do Menta.',
+    titulo: `${nome} ativado!`,
+    mensagem,
   });
 }
- 
+
 /**
- * Marca cancelamento do Premium com periodo de graca de 30 dias.
+ * Marca cancelamento do plano pago com periodo de graca de 30 dias.
  *
  * Apos esse periodo, /api/limpeza-vencidos limpa os dados bancarios.
  * Se o usuario reativar antes disso (chamando ativarPremium), as flags
@@ -59,7 +71,7 @@ export async function marcarCancelamentoPremium(
   const agora = new Date();
   const dataApagar = new Date(agora);
   dataApagar.setDate(dataApagar.getDate() + DIAS_GRACE);
- 
+
   await supabase
     .from('profiles')
     .update({
@@ -68,23 +80,23 @@ export async function marcarCancelamentoPremium(
       dados_apagar_em: dataApagar.toISOString(),
     })
     .eq('id', userId);
- 
+
   const dataLegivel = dataApagar.toLocaleDateString('pt-BR', {
     day: '2-digit',
     month: 'long',
     year: 'numeric',
   });
- 
+
   await supabase.from('notificacoes').insert({
     user_id: userId,
     tipo: 'premium_cancelado',
-    titulo: 'Premium cancelado',
+    titulo: 'Assinatura cancelada',
     mensagem: `Sua assinatura foi cancelada. Suas conexões bancárias e transações ficam armazenadas por ${DIAS_GRACE} dias caso queira reativar. Após ${dataLegivel}, serão apagadas automaticamente.`,
   });
- 
+
   return { dataApagarISO: dataApagar.toISOString() };
 }
- 
+
 /**
  * Marca uma pausa por falha de pagamento (cartao recusado numa cobranca
  * recorrente -> status 'paused' no MP).
@@ -103,7 +115,7 @@ export async function marcarPausaPremium(
   const agora = new Date();
   const dataApagar = new Date(agora);
   dataApagar.setDate(dataApagar.getDate() + DIAS_GRACE);
- 
+
   await supabase
     .from('profiles')
     .update({
@@ -112,19 +124,19 @@ export async function marcarPausaPremium(
       dados_apagar_em: dataApagar.toISOString(),
     })
     .eq('id', userId);
- 
+
   const dataLegivel = dataApagar.toLocaleDateString('pt-BR', {
     day: '2-digit',
     month: 'long',
     year: 'numeric',
   });
- 
+
   await supabase.from('notificacoes').insert({
     user_id: userId,
     tipo: 'pagamento_pendente',
     titulo: 'Pagamento pendente',
-    mensagem: `Não conseguimos processar a cobrança da sua assinatura. Atualize seu cartão para manter o Premium ativo. Seus dados ficam guardados por ${DIAS_GRACE} dias (até ${dataLegivel}) caso prefira reativar mais tarde.`,
+    mensagem: `Não conseguimos processar a cobrança da sua assinatura. Atualize seu cartão para manter seu plano ativo. Seus dados ficam guardados por ${DIAS_GRACE} dias (até ${dataLegivel}) caso prefira reativar mais tarde.`,
   });
- 
+
   return { dataApagarISO: dataApagar.toISOString() };
 }

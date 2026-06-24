@@ -1,5 +1,5 @@
 'use client';
- 
+
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -7,18 +7,18 @@ import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
 import { RefreshCw, Trash2, Plus, FileText } from 'lucide-react';
 import BloqueioPremium from '@/components/BloqueioPremium';
- 
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const PluggyConnect = dynamic<any>(
   () => import('react-pluggy-connect').then((m) => m.PluggyConnect),
   { ssr: false }
 );
- 
+
 // Controla se o app esta no ambiente de producao da Pluggy
 const EH_PRODUCAO = process.env.NEXT_PUBLIC_PLUGGY_AMBIENTE === 'production';
- 
+
 type Aviso = { texto: string; tipo: 'erro' | 'ok' | 'info' } | null;
- 
+
 type Conexao = {
   id: string;
   pluggy_item_id: string;
@@ -29,12 +29,12 @@ type Conexao = {
   erro: string | null;
   criado_em: string;
 };
- 
+
 type Conta = {
   id: string;
   connection_id: string;
 };
- 
+
 function fmtDataHora(s: string | null): string {
   if (!s) return '';
   try {
@@ -48,11 +48,11 @@ function fmtDataHora(s: string | null): string {
     return '';
   }
 }
- 
+
 function StatusBadge({ status }: { status: string | null }) {
   let label = 'Pendente';
   let classes = 'bg-white/10 text-white/60';
- 
+
   if (status === 'UPDATED') {
     label = 'Atualizado';
     classes = 'bg-[#7ad9b7]/20 text-[#7ad9b7]';
@@ -63,18 +63,18 @@ function StatusBadge({ status }: { status: string | null }) {
     label = 'Reautenticar';
     classes = 'bg-yellow-500/20 text-yellow-300';
   }
- 
+
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${classes}`}>
       {label}
     </span>
   );
 }
- 
+
 export default function ConectarPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [plano, setPlano] = useState<'free' | 'premium'>('free');
+  const [plano, setPlano] = useState<'free' | 'premium' | 'max'>('free');
   const [conexoes, setConexoes] = useState<Conexao[]>([]);
   const [contas, setContas] = useState<Conta[]>([]);
   const [connectToken, setConnectToken] = useState<string | null>(null);
@@ -83,27 +83,27 @@ export default function ConectarPage() {
   const [acaoConexaoId, setAcaoConexaoId] = useState<string>('');
   const [confirmandoDelete, setConfirmandoDelete] = useState<string>('');
   const [aviso, setAviso] = useState<Aviso>(null);
- 
+
   const carregarConexoes = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
- 
+
     const { data: conns } = await supabase
       .from('connections')
       .select('id, pluggy_item_id, connector_name, connector_image_url, status, last_updated_at, erro, criado_em')
       .eq('user_id', user.id)
       .order('criado_em', { ascending: false });
- 
+
     setConexoes((conns || []) as Conexao[]);
- 
+
     const { data: contasData } = await supabase
       .from('contas_bancarias')
       .select('id, connection_id')
       .eq('user_id', user.id);
- 
+
     setContas((contasData || []) as Conta[]);
   }, []);
- 
+
   useEffect(() => {
     async function init() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -112,24 +112,26 @@ export default function ConectarPage() {
         return;
       }
       const perfil = await getOuCriaPerfil(user.id);
-      if (perfil?.plano === 'premium') {
-        setPlano('premium');
+      const planoAtual = (perfil?.plano as 'free' | 'premium' | 'max') || 'free';
+      setPlano(planoAtual);
+      // Open Finance e exclusivo do Max: so carrega conexoes pra Max.
+      if (planoAtual === 'max') {
         await carregarConexoes();
       }
       setLoading(false);
     }
     init();
   }, [router, carregarConexoes]);
- 
+
   async function getAuthToken(): Promise<string | null> {
     const { data: { session } } = await supabase.auth.getSession();
     return session?.access_token || null;
   }
- 
+
   async function abrirWidget() {
     setGerandoToken(true);
     setAviso(null);
- 
+
     try {
       const token = await getAuthToken();
       if (!token) {
@@ -137,13 +139,13 @@ export default function ConectarPage() {
         setGerandoToken(false);
         return;
       }
- 
+
       const resp = await fetch('/api/pluggy/conectar', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + token },
       });
       const dados = await resp.json();
- 
+
       if (!dados.sucesso || !dados.connectToken) {
         setAviso({
           texto: dados.erro || 'Não foi possível iniciar a conexão.',
@@ -152,18 +154,18 @@ export default function ConectarPage() {
         setGerandoToken(false);
         return;
       }
- 
+
       setConnectToken(dados.connectToken);
     } catch {
       setAviso({ texto: 'Conexão falhou. Verifique sua internet.', tipo: 'erro' });
     }
     setGerandoToken(false);
   }
- 
+
   async function sincronizar(itemId?: string) {
     setSincronizando(true);
     setAviso({ texto: 'Importando suas transações...', tipo: 'info' });
- 
+
     try {
       const token = await getAuthToken();
       if (!token) {
@@ -171,7 +173,7 @@ export default function ConectarPage() {
         setSincronizando(false);
         return false;
       }
- 
+
       const resp = await fetch('/api/pluggy/sincronizar', {
         method: 'POST',
         headers: {
@@ -181,7 +183,7 @@ export default function ConectarPage() {
         body: JSON.stringify(itemId ? { itemId } : {}),
       });
       const dados = await resp.json();
- 
+
       if (!dados.sucesso) {
         setAviso({
           texto: dados.erro || 'Erro ao sincronizar transações.',
@@ -190,13 +192,13 @@ export default function ConectarPage() {
         setSincronizando(false);
         return false;
       }
- 
+
       const partes: string[] = [];
       if (dados.totalContas > 0) partes.push(`${dados.totalContas} conta(s)`);
       if (dados.totalTransacoes > 0) partes.push(`${dados.totalTransacoes} transação(ões)`);
- 
+
       const resumo = partes.length > 0 ? partes.join(' e ') : 'nada novo';
- 
+
       setAviso({
         texto: `Sincronização concluída! ${resumo} atualizadas.`,
         tipo: 'ok',
@@ -210,11 +212,11 @@ export default function ConectarPage() {
       return false;
     }
   }
- 
+
   async function sincronizarUma(c: Conexao) {
     setAcaoConexaoId(`sync_${c.id}`);
     setAviso({ texto: `Sincronizando ${c.connector_name || 'banco'}...`, tipo: 'info' });
- 
+
     try {
       const token = await getAuthToken();
       if (!token) {
@@ -222,7 +224,7 @@ export default function ConectarPage() {
         setAcaoConexaoId('');
         return;
       }
- 
+
       const resp = await fetch('/api/pluggy/sincronizar', {
         method: 'POST',
         headers: {
@@ -232,7 +234,7 @@ export default function ConectarPage() {
         body: JSON.stringify({ itemId: c.pluggy_item_id }),
       });
       const dados = await resp.json();
- 
+
       if (!dados.sucesso) {
         setAviso({ texto: dados.erro || 'Erro ao sincronizar.', tipo: 'erro' });
       } else {
@@ -250,11 +252,11 @@ export default function ConectarPage() {
     }
     setAcaoConexaoId('');
   }
- 
+
   async function desconectar(c: Conexao) {
     setAcaoConexaoId(`del_${c.id}`);
     setAviso(null);
- 
+
     try {
       const token = await getAuthToken();
       if (!token) {
@@ -262,7 +264,7 @@ export default function ConectarPage() {
         setAcaoConexaoId('');
         return;
       }
- 
+
       const resp = await fetch('/api/pluggy/desconectar', {
         method: 'POST',
         headers: {
@@ -272,13 +274,13 @@ export default function ConectarPage() {
         body: JSON.stringify({ connectionId: c.id }),
       });
       const dados = await resp.json();
- 
+
       if (!dados.sucesso) {
         setAviso({ texto: dados.erro || 'Erro ao desconectar.', tipo: 'erro' });
         setAcaoConexaoId('');
         return;
       }
- 
+
       setAviso({
         texto: dados.pluggyOk
           ? `${dados.conector || 'Conta'} desconectada.`
@@ -292,21 +294,21 @@ export default function ConectarPage() {
     }
     setAcaoConexaoId('');
   }
- 
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function onPluggyConnectSuccess(itemData: any) {
     setConnectToken(null);
     setAviso({ texto: 'Salvando conexão...', tipo: 'info' });
- 
+
     const itemId = itemData?.item?.id || itemData?.id;
     if (!itemId) {
       setAviso({ texto: 'Conexão retornou sem identificador. Tente de novo.', tipo: 'erro' });
       return;
     }
- 
+
     try {
       const token = await getAuthToken();
- 
+
       const resp = await fetch('/api/pluggy/salvar-conexao', {
         method: 'POST',
         headers: {
@@ -316,14 +318,14 @@ export default function ConectarPage() {
         body: JSON.stringify({ itemId }),
       });
       const dados = await resp.json();
- 
+
       if (!dados.sucesso) {
         setAviso({ texto: dados.erro || 'Erro ao salvar conexão.', tipo: 'erro' });
         return;
       }
- 
+
       const sucessoSync = await sincronizar(itemId);
- 
+
       if (sucessoSync) {
         setTimeout(() => router.push('/dashboard'), 2000);
       }
@@ -331,18 +333,18 @@ export default function ConectarPage() {
       setAviso({ texto: 'Erro ao salvar conexão. Tente de novo.', tipo: 'erro' });
     }
   }
- 
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function onPluggyConnectError(error: any) {
     console.error('Pluggy Connect erro:', error);
     setConnectToken(null);
     setAviso({ texto: 'Algo deu errado durante a conexão. Tente novamente.', tipo: 'erro' });
   }
- 
+
   function onPluggyConnectClose() {
     setConnectToken(null);
   }
- 
+
   if (loading) {
     // Skeleton: replica o layout (header + botao conectar + lista de conexoes)
     return (
@@ -353,13 +355,13 @@ export default function ConectarPage() {
             <div className="h-7 w-40 rounded bg-[#183e31]/60 animate-pulse" />
             <div className="h-10 w-10 rounded-full bg-[#183e31]/60 animate-pulse" />
           </div>
- 
+
           {/* Botao "Conectar nova" */}
           <div className="h-14 rounded-2xl bg-[#183e31]/60 animate-pulse mb-8" />
- 
+
           {/* Titulo "Conexoes ativas" */}
           <div className="h-5 w-44 rounded bg-[#183e31]/60 animate-pulse mb-4" />
- 
+
           {/* Cards de conexao */}
           <div className="space-y-3">
             <div className="h-28 rounded-2xl bg-[#183e31]/60 animate-pulse" />
@@ -369,27 +371,28 @@ export default function ConectarPage() {
       </main>
     );
   }
- 
-  // ===== Gate Premium =====
-  if (plano !== 'premium') {
+
+  // ===== Gate Max (Open Finance e exclusivo do plano Max) =====
+  if (plano !== 'max') {
     return (
       <BloqueioPremium
         titulo="Open Finance"
-        descricao="Conecte seus bancos e veja todas as transações automaticamente, com categorização inteligente por IA."
+        descricao="Conectar seus bancos e ver todas as transações automaticamente, com categorização por IA, é exclusivo do plano Max."
+        nivel="max"
       />
     );
   }
- 
+
   const ocupado = gerandoToken || sincronizando;
   const temConexoes = conexoes.length > 0;
- 
+
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] p-6">
       <div className="max-w-md mx-auto">
         <header className="flex items-center justify-between mb-8 pt-8">
           <div>
             <p className="text-xs tracking-widest uppercase font-semibold text-[#7cdbb9]">
-              Premium
+              Max
             </p>
             <h1 className="text-2xl font-bold text-white mt-1">
               Open <span className="text-[#7ad9b7]">Finance</span>
@@ -402,7 +405,7 @@ export default function ConectarPage() {
             Voltar
           </a>
         </header>
- 
+
         {/* ===== Lista de conexoes (so se tem) ===== */}
         {temConexoes && (
           <div className="mb-6">
@@ -415,7 +418,7 @@ export default function ConectarPage() {
                 const sincronizandoEssa = acaoConexaoId === `sync_${c.id}`;
                 const deletandoEssa = acaoConexaoId === `del_${c.id}`;
                 const ocupadaEssa = sincronizandoEssa || deletandoEssa;
- 
+
                 if (confirmandoDelete === c.id) {
                   return (
                     <div key={c.id} className="rounded-2xl p-4 bg-red-500/10 border border-red-400/20">
@@ -444,7 +447,7 @@ export default function ConectarPage() {
                     </div>
                   );
                 }
- 
+
                 return (
                   <div key={c.id} className="rounded-2xl p-4 bg-white/5 border border-white/10">
                     <div className="flex items-start justify-between gap-2">
@@ -472,7 +475,7 @@ export default function ConectarPage() {
                         </button>
                       </div>
                     </div>
- 
+
                     <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                       <StatusBadge status={c.status} />
                       <span className="text-white/40 text-xs">
@@ -480,7 +483,7 @@ export default function ConectarPage() {
                         {c.last_updated_at && ` · ${fmtDataHora(c.last_updated_at)}`}
                       </span>
                     </div>
- 
+
                     {c.erro && (
                       <p className="text-red-300 text-xs mt-2 leading-snug break-words">
                         {c.erro}
@@ -492,7 +495,7 @@ export default function ConectarPage() {
             </div>
           </div>
         )}
- 
+
         {/* ===== Card principal: conteudo varia se tem conexoes ===== */}
         <div className={`rounded-3xl bg-white/5 border border-white/10 ${temConexoes ? 'p-5' : 'p-8'}`}>
           {!temConexoes ? (
@@ -506,13 +509,13 @@ export default function ConectarPage() {
               <p className="text-white/60 text-sm mb-6 leading-relaxed">
                 A Menta puxa todas as transações da sua conta direto do seu banco, com segurança via Open Finance. Diga adeus aos PDFs.
               </p>
- 
+
               <div className="space-y-3 mb-6">
                 <Beneficio>Sincronização automática</Beneficio>
                 <Beneficio>Histórico completo de transações</Beneficio>
                 <Beneficio>Principais bancos do Brasil</Beneficio>
               </div>
- 
+
               <button
                 onClick={abrirWidget}
                 disabled={ocupado}
@@ -520,7 +523,7 @@ export default function ConectarPage() {
               >
                 {gerandoToken ? 'Preparando...' : 'Conectar conta bancária'}
               </button>
- 
+
               <button
                 onClick={() => sincronizar()}
                 disabled={ocupado}
@@ -528,8 +531,8 @@ export default function ConectarPage() {
               >
                 {sincronizando ? 'Sincronizando...' : 'Sincronizar transações agora'}
               </button>
- 
-              {/* #4: Premium tambem pode analisar fatura PDF (usabilidade Free preservada) */}
+
+              {/* Max tambem pode analisar fatura PDF */}
               <button
                 onClick={() => router.push('/upload')}
                 disabled={ocupado}
@@ -549,7 +552,7 @@ export default function ConectarPage() {
                 <Plus size={16} strokeWidth={3} />
                 {gerandoToken ? 'Preparando...' : 'Conectar outro banco'}
               </button>
- 
+
               <button
                 onClick={() => sincronizar()}
                 disabled={ocupado}
@@ -558,8 +561,8 @@ export default function ConectarPage() {
                 <RefreshCw size={14} className={sincronizando ? 'animate-spin' : ''} />
                 {sincronizando ? 'Sincronizando...' : 'Sincronizar tudo'}
               </button>
- 
-              {/* #4: Premium tambem pode analisar fatura PDF (usabilidade Free preservada) */}
+
+              {/* Max tambem pode analisar fatura PDF */}
               <button
                 onClick={() => router.push('/upload')}
                 disabled={ocupado}
@@ -571,7 +574,7 @@ export default function ConectarPage() {
             </div>
           )}
         </div>
- 
+
         {aviso && (
           <div
             className={`mt-4 rounded-xl px-4 py-3 text-sm text-center border ${
@@ -585,7 +588,7 @@ export default function ConectarPage() {
             {aviso.texto}
           </div>
         )}
- 
+
         {/* Aviso de modo dev SO aparece em ambientes nao-producao */}
         {!EH_PRODUCAO && (
           <div className="mt-6 rounded-2xl p-4 bg-white/5 border border-white/10">
@@ -595,7 +598,7 @@ export default function ConectarPage() {
           </div>
         )}
       </div>
- 
+
       {connectToken && (
         <PluggyConnect
           connectToken={connectToken}
@@ -608,7 +611,7 @@ export default function ConectarPage() {
     </main>
   );
 }
- 
+
 function Beneficio({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 text-white/80 text-sm">
