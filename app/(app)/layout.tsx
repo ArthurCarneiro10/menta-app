@@ -2,6 +2,8 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { Home, Receipt, Sparkles, Target, TrendingUp } from 'lucide-react';
+import FeedbackFlutuante from '@/components/FeedbackFlutuante';
+
 
 // Paleta oficial Menta
 const COLORS = {
@@ -27,6 +29,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div style={{ minHeight: '100vh', background: '#f4f7f5', paddingBottom: '90px' }}>
       {/* Conteudo da tela atual */}
       {children}
+
+      {/* Botao flutuante de feedback do beta (WhatsApp) */}
+      <FeedbackFlutuante />
 
       {/* Barra de navegacao fixa embaixo */}
       <div
