@@ -210,7 +210,7 @@ export default function PlanosPage() {
               }`}
             >
               Anual
-            </button>
+            </button>""
           </div>
         </div>
 
