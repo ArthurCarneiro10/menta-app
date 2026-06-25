@@ -205,16 +205,11 @@ export default function PlanosPage() {
             </button>
             <button
               onClick={() => setCiclo('anual')}
-              className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-2 ${
+              className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors ${
                 ciclo === 'anual' ? 'bg-[#7ad9b7] text-[#010302]' : 'text-white/70 hover:text-white'
               }`}
             >
               Anual
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                ciclo === 'anual' ? 'bg-[#010302]/15 text-[#010302]' : 'bg-[#7ad9b7]/20 text-[#7cdbb9]'
-              }`}>
-                2 meses grátis
-              </span>
             </button>
           </div>
         </div>

@@ -1,20 +1,20 @@
 'use client';
- 
+
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil } from '@/lib/perfil';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, X } from 'lucide-react';
 import SinoNotificacoes from '@/components/SinoNotificacoes';
 import OnboardingModal from '@/components/OnboardingModal';
- 
+
 const CORES = ['#7ad9b7', '#7cdbb9', '#3d7d66', '#407c66', '#5a9e82', '#2d5f4d'];
- 
+
 const CARD_GRADIENT_STYLE = {
   background: 'linear-gradient(155deg, #183e31 0%, #0c2019 60%, #0c1f18 100%)',
   boxShadow: '0 20px 60px -20px rgba(0,0,0,0.5)',
 };
- 
+
 type Categoria = { nome: string; valor: number };
 type Fatura = {
   total: number;
@@ -28,45 +28,43 @@ type Transacao = {
   tipo: string | null;
   categoria: string | null;
 };
-type ContaBancaria = {
-  tipo: string | null;
-  saldo: number | string | null;
-};
- 
+
 function fmt(n: number) {
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function fmtShort(n: number) {
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
- 
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState('');
   const [nome, setNome] = useState('');
-  const [plano, setPlano] = useState<'free' | 'premium'>('free');
- 
+  const [plano, setPlano] = useState<'free' | 'premium' | 'max'>('free');
+  // Card de upsell dispensavel (Free) - some so nesta sessao
+  const [upsellDispensado, setUpsellDispensado] = useState(false);
+
   const [fatura, setFatura] = useState<Fatura | null>(null);
- 
+
   const [temConexao, setTemConexao] = useState(false);
   const [totalBanco, setTotalBanco] = useState(0);
   const [categoriasBanco, setCategoriasBanco] = useState<Categoria[]>([]);
   const [temTxRecente, setTemTxRecente] = useState(false);
- 
+
   const [saldoBancario, setSaldoBancario] = useState(0);
   const [numContasBancarias, setNumContasBancarias] = useState(0);
   // #1: saldo por banco (so contas BANK), e se o detalhamento esta aberto
   const [saldoPorBanco, setSaldoPorBanco] = useState<{ banco: string; saldo: number }[]>([]);
   const [saldoExpandido, setSaldoExpandido] = useState(false);
- 
+
   const [temFaturasAntigas, setTemFaturasAntigas] = useState(false);
- 
+
   // Abre a aba Gastos ja filtrada na categoria clicada (#5)
   function abrirGastosCategoria(nomeCat: string) {
     router.push(`/gastos?categoria=${encodeURIComponent(nomeCat)}`);
   }
- 
+
   useEffect(() => {
     async function init() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -75,14 +73,17 @@ export default function DashboardPage() {
         return;
       }
       setUserId(user.id);
- 
+
       const perfil = await getOuCriaPerfil(user.id);
       const nomeBase = perfil?.nome || (user.email ? user.email.split('@')[0] : 'voce');
-      setNome(nomeBase);
- 
-      const ehPremium = perfil?.plano === 'premium';
-      setPlano(ehPremium ? 'premium' : 'free');
- 
+      // Mostra so o primeiro nome no "Oi,"
+      setNome(nomeBase.split(/\s+/)[0]);
+
+      const planoAtual = (perfil?.plano as 'free' | 'premium' | 'max') || 'free';
+      setPlano(planoAtual);
+      // Open Finance (visao de banco) e exclusivo do Max.
+      const ehMax = planoAtual === 'max';
+
       const { count: fatCount } = await supabase
         .from('faturas')
         .select('id', { count: 'exact', head: true })
@@ -90,21 +91,21 @@ export default function DashboardPage() {
         .not('analisado_em', 'is', null);
       const temPDFs = (fatCount || 0) > 0;
       setTemFaturasAntigas(temPDFs);
- 
-      if (ehPremium) {
+
+      if (ehMax) {
         const { count: connCount } = await supabase
           .from('connections')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', user.id);
         const conectado = (connCount || 0) > 0;
         setTemConexao(conectado);
- 
+
         if (conectado) {
           const { data: contasData } = await supabase
             .from('contas_bancarias')
             .select('saldo, tipo, connections(connector_name)')
             .eq('user_id', user.id);
- 
+
           const bankComSaldo = (contasData || []).filter(
             (c: { tipo: string | null; saldo: number | string | null }) =>
               c.tipo === 'BANK' && c.saldo !== null
@@ -115,7 +116,7 @@ export default function DashboardPage() {
           );
           setSaldoBancario(saldoTotal);
           setNumContasBancarias(bankComSaldo.length);
- 
+
           // #1: agrupa o saldo das contas BANK por banco (connector_name).
           const mapaBanco = new Map<string, number>();
           for (const c of bankComSaldo as Array<{ saldo: number | string | null; connections: unknown }>) {
@@ -130,26 +131,26 @@ export default function DashboardPage() {
               .map(([banco, saldo]) => ({ banco, saldo }))
               .sort((a, b) => b.saldo - a.saldo)
           );
- 
+
           const trinta = new Date();
           trinta.setDate(trinta.getDate() - 30);
           const limite = trinta.toISOString().slice(0, 10);
           // Teto: ate hoje. Sem isso, parcelas com data futura (que o banco
           // ja lancou) vazariam pra dentro do filtro e inflariam o total (#6).
           const hoje = new Date().toISOString().slice(0, 10);
- 
+
           const { data: txs } = await supabase
             .from('transacoes_banco')
             .select('valor, tipo, categoria')
             .eq('user_id', user.id)
             .gte('data', limite)
             .lte('data', hoje);
- 
+
           const debits: Transacao[] = (txs || []).filter((t: Transacao) => t.tipo === 'DEBIT');
- 
+
           if (debits.length > 0) {
             setTemTxRecente(true);
- 
+
             let total = 0;
             const mapa = new Map<string, number>();
             for (const t of debits) {
@@ -158,7 +159,7 @@ export default function DashboardPage() {
               const cat = (t.categoria || 'Outros').trim() || 'Outros';
               mapa.set(cat, (mapa.get(cat) || 0) + v);
             }
- 
+
             setTotalBanco(total);
             const cats = Array.from(mapa.entries())
               .map(([nome, valor]) => ({ nome, valor }))
@@ -167,6 +168,7 @@ export default function DashboardPage() {
           }
         }
       } else {
+        // Free e Premium: visao da ultima fatura analisada (sem Open Finance).
         const { data } = await supabase
           .from('faturas')
           .select('total, categorias, insight, nome_original, analisado_em')
@@ -175,15 +177,15 @@ export default function DashboardPage() {
           .order('analisado_em', { ascending: false })
           .limit(1)
           .maybeSingle();
- 
+
         if (data) setFatura(data as Fatura);
       }
- 
+
       setLoading(false);
     }
     init();
   }, [router]);
- 
+
   if (loading) {
     // Skeleton: replica grosseiramente o layout (header + cards + lista de categorias)
     // pra que a transicao pro conteudo real seja suave, sem reflow.
@@ -201,16 +203,16 @@ export default function DashboardPage() {
               <div className="h-10 w-10 rounded-full bg-[#183e31]/60 animate-pulse" />
             </div>
           </div>
- 
+
           {/* Cards do topo (saldo + gasto ou total + insight) */}
           <div className="grid sm:grid-cols-2 gap-3 mb-8">
             <div className="h-28 rounded-2xl bg-[#183e31]/60 animate-pulse" />
             <div className="h-28 rounded-2xl bg-[#183e31]/60 animate-pulse" />
           </div>
- 
+
           {/* Titulo da secao */}
           <div className="h-5 w-48 rounded bg-[#183e31]/60 animate-pulse mb-4" />
- 
+
           {/* Lista de categorias */}
           <div className="space-y-3">
             <div className="h-16 rounded-2xl bg-[#183e31]/60 animate-pulse" />
@@ -222,24 +224,25 @@ export default function DashboardPage() {
       </main>
     );
   }
- 
-  const ctaHeader =
-    plano === 'premium'
-      ? { href: '/conectar', label: temConexao ? 'Banco' : 'Conectar banco' }
-      : { href: '/upload', label: 'Enviar fatura' };
- 
+
+  const ehMax = plano === 'max';
+
+  const ctaHeader = ehMax
+    ? { href: '/conectar', label: temConexao ? 'Banco' : 'Conectar banco' }
+    : { href: '/upload', label: 'Enviar fatura' };
+
   const somaFatura = fatura
     ? fatura.categorias.reduce((acc, c) => acc + (c.valor || 0), 0)
     : 0;
- 
+
   const saldoNegativo = saldoBancario < 0;
   const saldoAbs = Math.abs(saldoBancario);
- 
-  // Flags pra decidir o layout do bloco hero
-  const temSaldoCard = plano === 'premium' && temConexao && numContasBancarias > 0;
-  const temGastoCard = plano === 'premium' && temTxRecente;
- 
-  // Cartao de categoria clicavel (#5) - usado nas duas listas (Free e Premium)
+
+  // Flags pra decidir o layout do bloco hero (so Max tem banco)
+  const temSaldoCard = ehMax && temConexao && numContasBancarias > 0;
+  const temGastoCard = ehMax && temTxRecente;
+
+  // Cartao de categoria clicavel (#5) - usado nas duas listas (fatura e banco)
   function CategoriaCard({ cat, total, cor }: { cat: Categoria; total: number; cor: string }) {
     const pct = total > 0 ? (cat.valor / total) * 100 : 0;
     return (
@@ -261,7 +264,7 @@ export default function DashboardPage() {
       </button>
     );
   }
- 
+
   // #1: detalhamento do saldo por banco (aparece ao expandir)
   function DetalheSaldo() {
     if (!saldoExpandido || saldoPorBanco.length <= 1) return null;
@@ -278,7 +281,7 @@ export default function DashboardPage() {
       </div>
     );
   }
- 
+
   // Subtitulo do saldo: vira botao "ver por banco" quando ha mais de um banco
   function SubtituloSaldo({ sufixo }: { sufixo: string }) {
     if (saldoPorBanco.length > 1) {
@@ -301,12 +304,12 @@ export default function DashboardPage() {
       </p>
     );
   }
- 
+
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-16">
       <OnboardingModal />
       <div className="max-w-2xl mx-auto px-5">
- 
+
         <header className="flex items-center justify-between pt-10 pb-6">
           <div className="flex items-center gap-3">
             <a
@@ -341,7 +344,32 @@ export default function DashboardPage() {
             <SinoNotificacoes userId={userId} />
           </div>
         </header>
- 
+
+        {/* =========== CARD DE UPSELL (Free, dispensavel) =========== */}
+        {plano === 'free' && !upsellDispensado && (
+          <div className="mb-6 rounded-2xl p-4 bg-[#7ad9b7]/10 border border-[#7ad9b7]/30 flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-white font-bold text-sm">Análises e IA ilimitadas</p>
+              <p className="text-white/60 text-xs mt-0.5 leading-snug">
+                Vire Premium e tire o limite de faturas e perguntas.
+              </p>
+            </div>
+            <a
+              href="/planos"
+              className="px-4 py-2 rounded-full text-xs font-bold bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9] transition-colors no-underline whitespace-nowrap shrink-0"
+            >
+              Ver planos
+            </a>
+            <button
+              onClick={() => setUpsellDispensado(true)}
+              aria-label="Dispensar"
+              className="p-1 text-white/40 hover:text-white/80 transition-colors shrink-0"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
         {/* =========== HERO BLOCO: Saldo + Gasto lado a lado (sm:cols-2) =========== */}
         {temSaldoCard && temGastoCard && (
           <div className="mb-6">
@@ -370,7 +398,7 @@ export default function DashboardPage() {
               </div>
               <SubtituloSaldo sufixo="" />
             </div>
- 
+
             {/* Gasto */}
             <div
               className="rounded-3xl overflow-hidden relative p-5"
@@ -393,7 +421,7 @@ export default function DashboardPage() {
           <DetalheSaldo />
           </div>
         )}
- 
+
         {/* Saldo SOLO (sem gasto recente) - mantem comportamento original */}
         {temSaldoCard && !temGastoCard && (
           <div className="mb-4">
@@ -420,7 +448,7 @@ export default function DashboardPage() {
           <DetalheSaldo />
           </div>
         )}
- 
+
         {/* Gasto SOLO (sem saldo - so cartao de credito) */}
         {!temSaldoCard && temGastoCard && (
           <div
@@ -441,9 +469,9 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
- 
-        {/* =========== ESTADO FREE =========== */}
-        {plano === 'free' && !fatura && (
+
+        {/* =========== ESTADO FREE / PREMIUM SEM FATURA =========== */}
+        {!ehMax && !fatura && (
           <div className="rounded-3xl p-8 text-center bg-white/5 border border-white/10">
             <p className="text-white text-lg font-bold mb-2">
               Nenhuma fatura analisada ainda
@@ -459,8 +487,8 @@ export default function DashboardPage() {
             </a>
           </div>
         )}
- 
-        {plano === 'free' && fatura && (
+
+        {!ehMax && fatura && (
           <>
             <div
               className="rounded-3xl overflow-hidden relative p-6"
@@ -479,7 +507,7 @@ export default function DashboardPage() {
                 </span>
               </div>
             </div>
- 
+
             {fatura.insight && (
               <div className="mt-4 rounded-3xl p-5 bg-white" style={{ border: '1px solid rgba(122,217,183,0.4)' }}>
                 <div className="flex items-start gap-3">
@@ -497,7 +525,7 @@ export default function DashboardPage() {
                 </div>
               </div>
             )}
- 
+
             <div className="mt-6">
               <h2 className="font-bold text-base text-white mb-3">
                 Para onde foi o dinheiro
@@ -510,9 +538,9 @@ export default function DashboardPage() {
             </div>
           </>
         )}
- 
-        {/* =========== PREMIUM SEM CONEXAO =========== */}
-        {plano === 'premium' && !temConexao && (
+
+        {/* =========== MAX SEM CONEXAO =========== */}
+        {ehMax && !temConexao && (
           <div className="rounded-3xl p-8 text-center bg-white/5 border border-white/10">
             <div className="w-16 h-16 mx-auto rounded-full grid place-items-center bg-[#7ad9b7]/20 text-[#7ad9b7] mb-4">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -520,7 +548,7 @@ export default function DashboardPage() {
               </svg>
             </div>
             <p className="text-white text-lg font-bold mb-2">
-              Bem-vindo ao Premium
+              Bem-vindo ao Max
             </p>
             <p className="text-white/60 text-sm mb-6 leading-relaxed">
               Conecte sua conta bancária para a Menta puxar suas transações automaticamente.
@@ -533,9 +561,9 @@ export default function DashboardPage() {
             </a>
           </div>
         )}
- 
-        {/* =========== PREMIUM CONEXAO MAS SEM TX RECENTE =========== */}
-        {plano === 'premium' && temConexao && !temTxRecente && (
+
+        {/* =========== MAX CONEXAO MAS SEM TX RECENTE =========== */}
+        {ehMax && temConexao && !temTxRecente && (
           <div className="rounded-3xl p-8 text-center bg-white/5 border border-white/10">
             <p className="text-white text-lg font-bold mb-2">
               Sem transações nos últimos 30 dias
@@ -551,9 +579,9 @@ export default function DashboardPage() {
             </a>
           </div>
         )}
- 
+
         {/* =========== Categorias do banco (quando tem gasto recente) =========== */}
-        {plano === 'premium' && temTxRecente && (
+        {ehMax && temTxRecente && (
           <div className="mt-2">
             <h2 className="font-bold text-base text-white mb-3">
               Para onde foi o dinheiro
@@ -565,9 +593,9 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
- 
+
         {/* Link discreto pro historico de PDFs */}
-        {temFaturasAntigas && plano === 'premium' && (
+        {temFaturasAntigas && ehMax && (
           <div className="mt-8 text-center">
             <a
               href="/historico"
@@ -577,7 +605,7 @@ export default function DashboardPage() {
             </a>
           </div>
         )}
- 
+
       </div>
     </main>
   );

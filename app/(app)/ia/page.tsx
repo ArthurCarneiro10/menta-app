@@ -68,6 +68,8 @@ export default function IAChatPage() {
   const [input, setInput] = useState('');
   const [pensando, setPensando] = useState(false);
   const [dadosTexto, setDadosTexto] = useState('');
+  // Upsell: vira true quando o Free bate o limite de perguntas
+  const [limiteAtingido, setLimiteAtingido] = useState(false);
   // #2: estado do seletor de banco
   const [bancos, setBancos] = useState<string[]>([]);
   const [debitosTodos, setDebitosTodos] = useState<DebitoBanco[]>([]);
@@ -82,7 +84,7 @@ export default function IAChatPage() {
     'Me da uma dica pra economizar',
   ];
 
-  // Monta o resumo que vai pra IA. Premium com banco -> 30 dias do banco; senao -> fatura.
+  // Monta o resumo que vai pra IA. Plano pago com banco -> 30 dias do banco; senao -> fatura.
   useEffect(() => {
     async function carregar() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -91,20 +93,21 @@ export default function IAChatPage() {
         return;
       }
 
-      // Plano + conexao bancaria
+      // Plano + conexao bancaria. Open Finance e exclusivo do Max, mas a checagem
+      // inclui premium e max (premium simplesmente nao tera conexoes).
       const { data: perfil } = await supabase
         .from('profiles').select('plano').eq('id', user.id).maybeSingle();
-      const ehPremium = perfil?.plano === 'premium';
+      const ehPago = perfil?.plano === 'premium' || perfil?.plano === 'max';
 
       let temConexao = false;
-      if (ehPremium) {
+      if (ehPago) {
         const { count } = await supabase
           .from('connections').select('id', { count: 'exact', head: true }).eq('user_id', user.id);
         temConexao = (count || 0) > 0;
       }
 
-      // ===== Premium COM banco: usa transacoes_banco dos ultimos 30 dias =====
-      if (ehPremium && temConexao) {
+      // ===== Com banco (Max): usa transacoes_banco dos ultimos 30 dias =====
+      if (ehPago && temConexao) {
         const trinta = new Date();
         trinta.setDate(trinta.getDate() - 30);
         const limite = trinta.toISOString().slice(0, 10);
@@ -161,11 +164,11 @@ export default function IAChatPage() {
           return;
         }
 
-        setDadosTexto('O usuario e Premium e tem banco conectado, mas nao ha transacoes nos ultimos 30 dias.');
+        setDadosTexto('O usuario tem banco conectado, mas nao ha transacoes nos ultimos 30 dias.');
         return;
       }
 
-      // ===== Free, ou Premium sem banco: usa a ultima fatura analisada =====
+      // ===== Free, ou pago sem banco: usa a ultima fatura analisada =====
       const { data } = await supabase
         .from('faturas')
         .select('*')
@@ -246,6 +249,12 @@ export default function IAChatPage() {
         body: JSON.stringify({ pergunta: texto, dados: dadosTexto }),
       });
       const json = await resp.json();
+
+      // Limite do Free atingido: mostra o upsell
+      if (json.limite_atingido) {
+        setLimiteAtingido(true);
+      }
+
       const resposta = json.resposta || json.erro || 'Nao consegui responder agora.';
       setMensagens((m) => [...m, { role: 'ai', text: resposta }]);
     } catch {
@@ -329,8 +338,36 @@ export default function IAChatPage() {
         </div>
       </div>
 
-      {/* Sugestoes - some enquanto precisa escolher banco */}
-      {!precisaEscolher && (
+      {/* Upsell de limite (Free) - aparece acima do input quando bate o limite */}
+      {limiteAtingido && (
+        <div style={{ padding: '0 16px 8px', flexShrink: 0 }}>
+          <div style={{
+            background: 'white', border: `1px solid ${COLORS.primary}66`, borderRadius: '16px',
+            padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+          }}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: '13px', color: COLORS.ink }}>
+                Limite de perguntas atingido
+              </p>
+              <p style={{ margin: 0, fontSize: '12px', color: COLORS.muted }}>
+                Vire Premium pra perguntar sem limite.
+              </p>
+            </div>
+            <a
+              href="/planos"
+              style={{
+                background: COLORS.primary, color: COLORS.ink, fontWeight: 700, fontSize: '13px',
+                padding: '8px 14px', borderRadius: '999px', textDecoration: 'none', whiteSpace: 'nowrap',
+              }}
+            >
+              Ver planos
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Sugestoes - some enquanto precisa escolher banco ou bateu o limite */}
+      {!precisaEscolher && !limiteAtingido && (
         <div style={{ padding: '0 16px 8px', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
             {sugestoes.map((s, i) => (
