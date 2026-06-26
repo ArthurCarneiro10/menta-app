@@ -19,7 +19,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
  
 // Quantas analises de fatura um usuario Free pode fazer no total (vitalicio).
-export const LIMITE_ANALISES_FREE = 5;
+export const LIMITE_ANALISES_FREE = 3;
  
 /**
  * Le quantas analises vitalicias o usuario ja fez (coluna profiles.analises_vitalicias).
