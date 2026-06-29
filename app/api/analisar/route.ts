@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { LIMITE_ANALISES_FREE, contarAnalisesFeitas } from '@/lib/limites';
 import { analisarTextoFatura } from '@/lib/analise-fatura';
+import { enviarEmailLimiteSeNecessario } from '@/lib/email-limite';
  
 // Permite ate 60s de execucao (plano Hobby). A rota faz download + pdf-parse
 // + chamada de IA em sequencia, que pode passar do limite padrao.
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
     if (perfil?.plano !== 'premium' && perfil?.plano !== 'max' && !ehReanalise) {
       const jaAnalisadas = await contarAnalisesFeitas(user.id, supabase);
       if (jaAnalisadas >= LIMITE_ANALISES_FREE) {
+        await enviarEmailLimiteSeNecessario(supabase, user.id, user.email);
         return NextResponse.json(
           {
             erro: `Voce usou suas ${LIMITE_ANALISES_FREE} analises gratuitas.`,

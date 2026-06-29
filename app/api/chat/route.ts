@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { enviarEmailLimiteSeNecessario } from '@/lib/email-limite';
 
 // ===== MODELO DE IA =====
 const MODELO_IA = 'anthropic/claude-sonnet-4.6';
@@ -74,8 +75,10 @@ export async function POST(request: Request) {
           const restanteMin = Math.ceil((janelaMs - (agora - inicio)) / 60000);
           const horas = Math.floor(restanteMin / 60);
           const min = restanteMin % 60;
+          await enviarEmailLimiteSeNecessario(supabase, user.id, user.email);
           const quando =
             horas > 0 ? `${horas}h${min > 0 ? ` ${min}min` : ''}` : `${min}min`;
+            
 
           return NextResponse.json(
             {
