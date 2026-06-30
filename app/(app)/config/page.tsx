@@ -1,10 +1,10 @@
 'use client';
- 
+
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getOuCriaPerfil, salvaPerfil, salvaFoto } from '@/lib/perfil';
- 
+
 /* ---------- Icones (SVG inline, sem dependencia externa) ---------- */
 function Icon({ name }: { name: string }) {
   const common = {
@@ -97,7 +97,7 @@ function Icon({ name }: { name: string }) {
       return null;
   }
 }
- 
+
 /* ---------- Linha de item (estilo lista de app) ---------- */
 function Row({
   icon,
@@ -147,7 +147,7 @@ function Row({
     </button>
   );
 }
- 
+
 /* ---------- Bloco de secao com titulo ---------- */
 function Secao({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
@@ -161,8 +161,10 @@ function Secao({ titulo, children }: { titulo: string; children: React.ReactNode
     </div>
   );
 }
- 
+
 /* ============================ PAGINA ============================ */
+type PlanoUsuario = 'free' | 'premium' | 'max';
+
 export default function ConfigPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -172,17 +174,27 @@ export default function ConfigPage() {
   const [nome, setNome] = useState('');
   const [idade, setIdade] = useState('');
   const [fotoUrl, setFotoUrl] = useState<string | null>(null);
-  const [plano, setPlano] = useState<'free' | 'premium'>('free');
+  const [plano, setPlano] = useState<PlanoUsuario>('free');
+  // Assinatura por CARTAO (tabela assinaturas)
   const [assinatura, setAssinatura] = useState<{
     plano_tipo: 'mensal' | 'anual';
     proximo_pagamento: string | null;
   } | null>(null);
+  // Validade do plano por PIX (profiles.plano_expira_em). Quando preenchido,
+  // o plano foi pago via Pix (anual, sem renovacao automatica).
+  const [pixExpiraEm, setPixExpiraEm] = useState<string | null>(null);
   const [cancelando, setCancelando] = useState(false);
   const [enviandoFoto, setEnviandoFoto] = useState(false);
   const [mensagem, setMensagem] = useState('');
   const [avisoFoto, setAvisoFoto] = useState<{ texto: string; tipo: 'erro' | 'ok' } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
- 
+
+  // Derivados de plano: serve premium E max.
+  const ehPago = plano === 'premium' || plano === 'max';
+  const ehMax = plano === 'max';
+  const ehPix = !!pixExpiraEm; // pagou no Pix (tem validade)
+  const nomePlano = ehMax ? 'Menta Max' : 'Menta Premium';
+
   useEffect(() => {
     async function init() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -192,17 +204,31 @@ export default function ConfigPage() {
       }
       setUserId(user.id);
       setEmail(user.email || '');
- 
+
       const perfil = await getOuCriaPerfil(user.id);
+
+      // Le o plano (free/premium/max) e a validade do Pix, se houver.
+      let planoAtual: PlanoUsuario = 'free';
       if (perfil) {
         setNome(perfil.nome || '');
         setIdade(perfil.idade ? String(perfil.idade) : '');
         setFotoUrl(perfil.foto_url || null);
-        if (perfil.plano === 'premium') setPlano('premium');
+        if (perfil.plano === 'premium' || perfil.plano === 'max') {
+          planoAtual = perfil.plano;
+        }
+        // plano_expira_em so existe pra quem pagou no Pix.
+        if (perfil.plano_expira_em) {
+          setPixExpiraEm(perfil.plano_expira_em as string);
+        }
       }
- 
-      // Se Premium, busca a assinatura ativa pra mostrar detalhes
-      if (perfil?.plano === 'premium') {
+      setPlano(planoAtual);
+
+      // Se pago POR CARTAO (sem validade Pix), busca a assinatura ativa
+      // pra mostrar a proxima cobranca. Quem pagou no Pix nao tem linha
+      // em assinaturas (vive em pagamentos_pix), entao pulamos.
+      const pagoPorCartao =
+        (planoAtual === 'premium' || planoAtual === 'max') && !perfil?.plano_expira_em;
+      if (pagoPorCartao) {
         const { data: ass } = await supabase
           .from('assinaturas')
           .select('plano_tipo, proximo_pagamento')
@@ -218,35 +244,35 @@ export default function ConfigPage() {
           });
         }
       }
- 
+
       setLoading(false);
     }
     init();
   }, [router]);
- 
+
   async function handleSalvar() {
     setSalvando(true);
     setMensagem('');
- 
+
     const idadeNum = idade ? parseInt(idade, 10) : null;
- 
+
     const { error } = await salvaPerfil(userId, {
       nome: nome.trim() || null,
       idade: idadeNum,
     });
- 
+
     setSalvando(false);
     setMensagem(error ? 'Não foi possível salvar. Tente de novo.' : 'Tudo certo! Seus dados foram salvos.');
   }
- 
+
   function abrirSeletorFoto() {
     fileInputRef.current?.click();
   }
- 
+
   async function handleFotoSelecionada(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
- 
+
     if (!file.type.startsWith('image/')) {
       setAvisoFoto({ texto: 'Selecione um arquivo de imagem (JPG, PNG, etc).', tipo: 'erro' });
       return;
@@ -255,35 +281,35 @@ export default function ConfigPage() {
       setAvisoFoto({ texto: 'Imagem muito grande. Use uma imagem menor que 2 MB.', tipo: 'erro' });
       return;
     }
- 
+
     setEnviandoFoto(true);
     setAvisoFoto(null);
- 
+
     const { url, error } = await salvaFoto(userId, file);
- 
+
     setEnviandoFoto(false);
- 
+
     if (error || !url) {
       setAvisoFoto({ texto: 'Não foi possível salvar a foto. Tente de novo.', tipo: 'erro' });
       return;
     }
- 
+
     setFotoUrl(url);
     setAvisoFoto({ texto: 'Foto atualizada!', tipo: 'ok' });
     e.target.value = '';
   }
- 
+
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push('/login');
   }
- 
+
   async function handleCancelarPremium() {
     const ok = confirm(
-      'Tem certeza que deseja cancelar o Premium? Suas conexões bancárias e transações ficam armazenadas por 30 dias caso queira reativar.'
+      `Tem certeza que deseja cancelar o ${ehMax ? 'Max' : 'Premium'}? Suas conexões bancárias e transações ficam armazenadas por 30 dias caso queira reativar.`
     );
     if (!ok) return;
- 
+
     setCancelando(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -291,13 +317,13 @@ export default function ConfigPage() {
         router.push('/login');
         return;
       }
- 
+
       const r = await fetch('/api/cancelar-premium', {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + session.access_token },
       });
       const data = await r.json();
- 
+
       if (data.sucesso) {
         // Recarrega pra refletir estado Free
         window.location.reload();
@@ -310,9 +336,12 @@ export default function ConfigPage() {
       setCancelando(false);
     }
   }
- 
+
   const inicial = (nome || email || '?').trim().charAt(0).toUpperCase();
- 
+
+  const fmtData = (s: string) =>
+    new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
@@ -320,11 +349,11 @@ export default function ConfigPage() {
       </main>
     );
   }
- 
+
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-20">
       <div className="max-w-2xl mx-auto px-5">
- 
+
         {/* Cabecalho */}
         <header className="flex items-center justify-between pt-10 pb-6">
           <div>
@@ -342,7 +371,7 @@ export default function ConfigPage() {
             Voltar
           </a>
         </header>
- 
+
         {/* Avatar clicavel + foto */}
         <div className="flex flex-col items-center mb-8">
           <input
@@ -386,7 +415,7 @@ export default function ConfigPage() {
             </div>
           )}
         </div>
- 
+
         {/* PERFIL */}
         <Secao titulo="Perfil">
           <div className="px-4 py-4 space-y-4">
@@ -434,10 +463,10 @@ export default function ConfigPage() {
             )}
           </div>
         </Secao>
- 
+
         {/* PLANO */}
         <Secao titulo="Plano">
-          {plano === 'premium' ? (
+          {ehPago ? (
             <div className="px-4 py-4 space-y-3">
               <div className="rounded-2xl p-4 bg-[#7ad9b7]/10 border border-[#7ad9b7]/30">
                 <div className="flex items-start justify-between gap-2 mb-2">
@@ -446,39 +475,54 @@ export default function ConfigPage() {
                       Plano atual
                     </p>
                     <p className="text-lg font-bold text-white mt-1">
-                      Menta Premium
-                      {assinatura && (
+                      {nomePlano}
+                      {ehPix ? (
+                        <span className="text-white/60 font-normal text-sm ml-2">· Anual (Pix)</span>
+                      ) : assinatura ? (
                         <span className="text-white/60 font-normal text-sm ml-2">
                           · {assinatura.plano_tipo === 'anual' ? 'Anual' : 'Mensal'}
                         </span>
-                      )}
+                      ) : null}
                     </p>
                   </div>
                   <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
                     Ativo
                   </span>
                 </div>
-                {assinatura?.proximo_pagamento && (
+
+                {/* Pix: mostra validade. Cartao: mostra proxima cobranca. */}
+                {ehPix ? (
                   <p className="text-white/60 text-xs">
-                    Próxima cobrança:{' '}
-                    {new Date(assinatura.proximo_pagamento).toLocaleDateString('pt-BR', {
-                      day: '2-digit',
-                      month: 'long',
-                      year: 'numeric',
-                    })}
+                    Válido até: {fmtData(pixExpiraEm!)}
                   </p>
-                )}
+                ) : assinatura?.proximo_pagamento ? (
+                  <p className="text-white/60 text-xs">
+                    Próxima cobrança: {fmtData(assinatura.proximo_pagamento)}
+                  </p>
+                ) : null}
               </div>
-              <button
-                onClick={handleCancelarPremium}
-                disabled={cancelando}
-                className="w-full px-6 py-3 rounded-full text-sm font-medium border border-white/15 text-white/70 hover:bg-white/5 hover:text-white transition-colors disabled:opacity-50"
-              >
-                {cancelando ? 'Cancelando...' : 'Cancelar Premium'}
-              </button>
-              <p className="text-white/40 text-[11px] text-center leading-relaxed">
-                Ao cancelar, suas conexões bancárias e transações ficam armazenadas por 30 dias caso queira reativar.
-              </p>
+
+              {/* Pix nao tem assinatura recorrente pra cancelar: orienta renovar.
+                  Cartao: botao de cancelar normal. */}
+              {ehPix ? (
+                <p className="text-white/40 text-[11px] text-center leading-relaxed">
+                  Seu plano foi pago via Pix e vale até {fmtData(pixExpiraEm!)}. Não há cobrança
+                  automática — perto do vencimento avisamos por email para renovar.
+                </p>
+              ) : (
+                <>
+                  <button
+                    onClick={handleCancelarPremium}
+                    disabled={cancelando}
+                    className="w-full px-6 py-3 rounded-full text-sm font-medium border border-white/15 text-white/70 hover:bg-white/5 hover:text-white transition-colors disabled:opacity-50"
+                  >
+                    {cancelando ? 'Cancelando...' : `Cancelar ${ehMax ? 'Max' : 'Premium'}`}
+                  </button>
+                  <p className="text-white/40 text-[11px] text-center leading-relaxed">
+                    Ao cancelar, suas conexões bancárias e transações ficam armazenadas por 30 dias caso queira reativar.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="px-4 py-4">
@@ -490,9 +534,9 @@ export default function ConfigPage() {
                     </svg>
                   </div>
                   <div className="flex-1">
-                    <h3 className="font-bold text-white">Faça upgrade pra Premium</h3>
+                    <h3 className="font-bold text-white">Conheça os planos pagos</h3>
                     <p className="text-white/60 text-sm mt-1 leading-relaxed">
-                      Conecte seus bancos com Open Finance, sincronização automática e IA avançada.
+                      Premium libera análises e IA ilimitadas. Max ainda conecta seus bancos com Open Finance e sincroniza tudo sozinho.
                     </p>
                   </div>
                 </div>
@@ -503,24 +547,19 @@ export default function ConfigPage() {
                   Ver planos
                 </a>
                 <p className="text-white/50 text-xs text-center mt-3">
-                  A partir de R$ 29,90/mês 
+                  A partir de R$ 29,90/mês
                 </p>
               </div>
             </div>
           )}
         </Secao>
- 
+
         {/* CONTA E SEGURANCA */}
         <Secao titulo="Conta e segurança">
           <Row icon="lock" label="Trocar senha" onClick={() => router.push('/config/senha')} />
           <Row icon="camera" label="Foto de perfil" onClick={abrirSeletorFoto} />
         </Secao>
- 
-        {/* PREFERENCIAS */}
-        <Secao titulo="Preferências">
-          <Row icon="theme" label="Tema (claro / escuro)" emBreve />
-        </Secao>
- 
+
         {/* SOBRE */}
         <Secao titulo="Sobre">
           <Row icon="info" label="Versão 1.0.0" />
@@ -528,12 +567,12 @@ export default function ConfigPage() {
           <Row icon="shield" label="Política de privacidade" onClick={() => router.push('/privacidade')} />
           <Row icon="mail" label="Suporte e contato" onClick={() => router.push('/suporte')} />
         </Secao>
- 
+
         {/* ZONA DE PERIGO */}
         <Secao titulo="Zona de perigo">
           <Row icon="trash" label="Excluir minha conta" danger onClick={() => router.push('/config/excluir')} />
         </Secao>
- 
+
         {/* Sair */}
         <button
           onClick={handleLogout}
@@ -542,7 +581,7 @@ export default function ConfigPage() {
           <Icon name="logout" />
           Sair da conta
         </button>
- 
+
       </div>
     </main>
   );
