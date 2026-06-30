@@ -34,8 +34,8 @@ function getAccessToken(): string {
 //   premium: 299 -> 269.10
 //   max:     499 -> 449.10
 export const PRECOS_PIX = {
-  premium: 269.1,
-  max: 449.1,
+  premium: 1,
+  max: 1,
 } as const;
 
 export type NivelPagoPix = 'premium' | 'max';
