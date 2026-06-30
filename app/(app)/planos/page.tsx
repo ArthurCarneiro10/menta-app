@@ -3,15 +3,22 @@
 /**
  * Tela de planos: Free / Premium / Max.
  *
- * 3 cards + toggle Mensal<->Anual. Cada botao pago chama
- * /api/mp/iniciar-assinatura com { nivel, ciclo } e redireciona pro
- * init_point do Mercado Pago.
+ * 3 cards + toggle Mensal<->Anual.
+ *  - Cartao (mensal ou anual): botao chama /api/mp/iniciar-assinatura
+ *    (assinatura recorrente) e redireciona pro init_point do MP.
+ *  - Pix (SO no anual): botao chama /api/mp/pix/iniciar (pagamento unico,
+ *    12 meses, sem renovacao automatica) e redireciona pro checkout Pix.
  *
- * Se o user ja tem plano pago (premium ou max), redireciona pra /config.
- * (Trocar de plano pago pra outro eh uma feature separada, futura.)
+ * Trava de entrada:
+ *  - Pago por CARTAO (plano pago e plano_expira_em NULL) -> manda pro /config
+ *    (ja tem recorrencia, nao assina de novo).
+ *  - Pago por PIX (plano pago e plano_expira_em preenchido) -> DEIXA entrar,
+ *    pra poder renovar o anual.
+ *  - Free -> entra normal.
  *
  * IMPORTANTE: os precos exibidos aqui sao SO TEXTO e devem bater com o
- * PRECOS de lib/mercadopago.ts. Se mudar la, mude aqui tambem.
+ * PRECOS de lib/mercadopago.ts (cartao) e PRECOS_PIX de lib/mercadopago-pix.ts
+ * (Pix). Pix anual = mesmo valor do cartao anual (sem desconto).
  */
 
 import { useEffect, useState } from 'react';
@@ -94,7 +101,8 @@ export default function PlanosPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [ciclo, setCiclo] = useState<Ciclo>('mensal');
-  const [processando, setProcessando] = useState<Nivel | null>(null);
+  // Qual acao esta processando: nivel + meio (cartao/pix), pra travar so o botao certo.
+  const [processando, setProcessando] = useState<string | null>(null);
   const [erro, setErro] = useState('');
 
   useEffect(() => {
@@ -105,14 +113,18 @@ export default function PlanosPage() {
         return;
       }
 
-      // Se ja tem plano pago, manda pro /config
+      // Le plano + validade Pix. Cartao ativo -> manda pro /config.
+      // Pix -> deixa entrar (pode renovar). Free -> entra.
       const { data: perfil } = await supabase
         .from('profiles')
-        .select('plano')
+        .select('plano, plano_expira_em')
         .eq('id', session.user.id)
         .maybeSingle();
 
-      if (perfil?.plano === 'premium' || perfil?.plano === 'max') {
+      const ehPago = perfil?.plano === 'premium' || perfil?.plano === 'max';
+      const ehCartao = ehPago && !perfil?.plano_expira_em; // cartao = sem validade fixa
+
+      if (ehCartao) {
         router.replace('/config');
         return;
       }
@@ -122,9 +134,10 @@ export default function PlanosPage() {
     init();
   }, [router]);
 
-  async function handleAssinar(nivel: Nivel) {
+  // ===== Cartao (assinatura recorrente) =====
+  async function handleAssinarCartao(nivel: Nivel) {
     setErro('');
-    setProcessando(nivel);
+    setProcessando(`cartao_${nivel}`);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -155,6 +168,40 @@ export default function PlanosPage() {
     }
   }
 
+  // ===== Pix (pagamento unico, so anual) =====
+  async function handlePagarPix(nivel: Nivel) {
+    setErro('');
+    setProcessando(`pix_${nivel}`);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      const r = await fetch('/api/mp/pix/iniciar', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + session.access_token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ nivel }),
+      });
+      const data = await r.json();
+
+      if (data.init_point) {
+        window.location.href = data.init_point;
+      } else {
+        setErro(data.erro || 'Nao foi possivel iniciar o pagamento via Pix');
+        setProcessando(null);
+      }
+    } catch {
+      setErro('Erro de conexao. Tente novamente.');
+      setProcessando(null);
+    }
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] flex items-center justify-center">
@@ -169,6 +216,8 @@ export default function PlanosPage() {
       </main>
     );
   }
+
+  const ocupado = processando !== null;
 
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18] pb-20">
@@ -210,7 +259,7 @@ export default function PlanosPage() {
               }`}
             >
               Anual
-            </button>""
+            </button>
           </div>
         </div>
 
@@ -218,7 +267,9 @@ export default function PlanosPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 items-stretch">
           {PLANOS.map((plano) => {
             const ehFree = plano.id === 'free';
-            const preco = ehFree ? null : PRECO_TXT[plano.id as Nivel][ciclo];
+            const nivel = plano.id as Nivel;
+            const preco = ehFree ? null : PRECO_TXT[nivel][ciclo];
+            const mostraPix = !ehFree && ciclo === 'anual'; // Pix so no anual
 
             return (
               <div
@@ -276,17 +327,42 @@ export default function PlanosPage() {
                     Plano atual
                   </button>
                 ) : (
-                  <button
-                    onClick={() => handleAssinar(plano.id as Nivel)}
-                    disabled={processando !== null}
-                    className={`w-full px-6 py-3 rounded-full text-sm font-bold transition-colors disabled:opacity-50 ${
-                      plano.destaque
-                        ? 'bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9]'
-                        : 'border border-white/20 text-white hover:bg-white/10'
-                    }`}
-                  >
-                    {processando === plano.id ? 'Abrindo checkout...' : `Assinar ${plano.nome}`}
-                  </button>
+                  <div className="space-y-2">
+                    {/* Botao cartao */}
+                    <button
+                      onClick={() => handleAssinarCartao(nivel)}
+                      disabled={ocupado}
+                      className={`w-full px-6 py-3 rounded-full text-sm font-bold transition-colors disabled:opacity-50 ${
+                        plano.destaque
+                          ? 'bg-[#7ad9b7] text-[#010302] hover:bg-[#7cdbb9]'
+                          : 'border border-white/20 text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {processando === `cartao_${nivel}`
+                        ? 'Abrindo checkout...'
+                        : `Assinar com cartão`}
+                    </button>
+
+                    {/* Botao Pix (so no anual) */}
+                    {mostraPix && (
+                      <button
+                        onClick={() => handlePagarPix(nivel)}
+                        disabled={ocupado}
+                        className="w-full px-6 py-3 rounded-full text-sm font-bold border border-[#7ad9b7]/40 text-[#7ad9b7] hover:bg-[#7ad9b7]/10 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {processando === `pix_${nivel}` ? (
+                          'Abrindo Pix...'
+                        ) : (
+                          <>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 2 2 12l10 10 10-10z" />
+                            </svg>
+                            Pagar no Pix
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             );
@@ -301,8 +377,8 @@ export default function PlanosPage() {
 
         {/* Rodape */}
         <div className="text-center text-white/40 text-xs space-y-1">
-          <p>Cobrança automática no cartão.</p>
-          <p>Sem fidelidade. Cancele a qualquer momento.</p>
+          <p>Cartão: cobrança automática, cancele quando quiser.</p>
+          <p>Pix: pagamento único do plano anual, sem renovação automática.</p>
           <p>Processamento seguro pelo Mercado Pago.</p>
         </div>
 
