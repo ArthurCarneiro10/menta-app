@@ -1,21 +1,19 @@
 /**
  * Webhook do Mercado Pago.
  *
- * Recebe eventos sobre preapprovals (assinaturas) e pagamentos recorrentes.
- * Para cada evento relevante, consulta o estado atual no MP e sincroniza
- * o DB local (tabelas assinaturas + profiles). A tabela assinaturas eh
- * tratada como espelho fiel do MP.
+ * Recebe eventos sobre preapprovals (assinaturas de CARTAO), pagamentos
+ * recorrentes, e pagamentos unicos via PIX. Para cada evento relevante,
+ * consulta o estado atual no MP e sincroniza o DB local.
  *
  * Eventos tratados:
- *   - subscription_preapproval (criada/autorizada/pausada/cancelada)
- *   - subscription_authorized_payment (cobranca recorrente processada)
+ *   - subscription_preapproval (assinatura cartao: criada/autorizada/pausada/cancelada)
+ *   - subscription_authorized_payment (cobranca recorrente de cartao processada)
+ *   - payment (pagamento unico via Pix -> ativa plano anual com validade de 12 meses)
  *
  * Garantias de robustez:
- *   - Ao autorizar uma assinatura, CURA duplicadas: cancela no MP + local
- *     qualquer outra viva do mesmo usuario (anti cobranca dupla).
- *   - paused (cartao falhou) aplica grace de 30 dias com notificacao propria.
- *   - Recuperacao automatica: paused -> authorized zera as flags via ativarPremium.
- *   - Ativa o nivel certo (premium ou max) lido da tabela assinaturas.
+ *   - Cartao: ao autorizar, CURA duplicadas; paused aplica grace de 30 dias.
+ *   - Pix: idempotente (nao ativa a mesma ordem duas vezes); so ativa em 'approved'.
+ *   - SEMPRE responde 200, mesmo em erro, pra evitar retry infinito do MP.
  *
  * IMPORTANTE: MP nao consegue chamar localhost. Pra testar este endpoint
  * voce precisa ter o app deployado em URL HTTPS publica (Vercel).
@@ -30,8 +28,10 @@ import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { getPreapproval, getAuthorizedPayment } from '@/lib/mercadopago';
+import { getPagamento } from '@/lib/mercadopago-pix';
 import {
   ativarPremium,
+  ativarPlanoPix,
   marcarCancelamentoPremium,
   marcarPausaPremium,
 } from '@/lib/premium';
@@ -116,6 +116,10 @@ export async function POST(request: Request) {
       await processarPreapproval(resourceId);
     } else if (eventType === 'subscription_authorized_payment') {
       await processarAuthorizedPayment(resourceId);
+    } else if (eventType === 'payment' || eventType.startsWith('payment')) {
+      // Pagamento unico (Pix). O cartao recorrente NAO cai aqui - ele vem
+      // como subscription_authorized_payment. Aqui so tratamos Pix avulso.
+      await processarPagamentoPix(resourceId);
     } else {
       console.log(`[mp-webhook] tipo nao tratado: ${eventType}`);
     }
@@ -196,7 +200,7 @@ function validarAssinaturaMP(params: {
 }
 
 // =========================================================================
-// Helpers
+// Helpers - CARTAO (preapproval)
 // =========================================================================
 
 async function processarPreapproval(preapprovalId: string): Promise<void> {
@@ -308,7 +312,7 @@ async function processarPreapproval(preapprovalId: string): Promise<void> {
 }
 
 /**
- * Processa o evento subscription_authorized_payment (cobranca recorrente).
+ * Processa o evento subscription_authorized_payment (cobranca recorrente de cartao).
  *
  * O data.id desse evento eh o id da COBRANCA, nao da preapproval. Buscamos
  * o authorized_payment pra descobrir o preapproval_id e dai ressincronizamos
@@ -331,6 +335,87 @@ async function processarAuthorizedPayment(authorizedPaymentId: string): Promise<
   // Reusa todo o fluxo de sincronizacao: vai reconsultar o MP, atualizar
   // status + proximo_pagamento, e reativar o plano se preciso.
   await processarPreapproval(ap.preapproval_id);
+}
+
+// =========================================================================
+// Helpers - PIX (pagamento unico)
+// =========================================================================
+
+/**
+ * Processa o evento `payment` (pagamento unico via Pix).
+ *
+ * O data.id eh o id do PAGAMENTO. Consultamos no MP, e so seguimos se
+ * status === 'approved'. O external_reference do pagamento aponta pra
+ * ordem em pagamentos_pix (gravado quando criamos a preference). Achando
+ * a ordem, ativamos o plano com validade de 12 meses.
+ *
+ * Idempotente: se a ordem ja estiver 'approved', nao reativa.
+ * Seguro: se o external_reference nao bater com nenhuma ordem nossa, ignora.
+ */
+async function processarPagamentoPix(paymentId: string): Promise<void> {
+  const pagamento = await getPagamento(paymentId);
+
+  // So ativa pagamento aprovado.
+  if (pagamento.status !== 'approved') {
+    console.log(
+      `[mp-webhook] pagamento ${paymentId} status=${pagamento.status} - ignorado (so ativa em approved)`
+    );
+    return;
+  }
+
+  const ordemId = pagamento.external_reference;
+  if (!ordemId) {
+    console.warn(`[mp-webhook] pagamento ${paymentId} sem external_reference - ignorado`);
+    return;
+  }
+
+  // Busca a ordem Pix correspondente.
+  const { data: ordem } = await supabase
+    .from('pagamentos_pix')
+    .select('id, user_id, nivel, status')
+    .eq('id', ordemId)
+    .maybeSingle();
+
+  if (!ordem) {
+    // external_reference nao bate com nenhuma ordem Pix nossa. Pode ser um
+    // pagamento de outra origem - ignora com seguranca.
+    console.warn(
+      `[mp-webhook] pagamento ${paymentId} sem ordem Pix correspondente (ref=${ordemId}) - ignorado`
+    );
+    return;
+  }
+
+  // Idempotencia: nao reativa a mesma ordem.
+  if (ordem.status === 'approved') {
+    console.log(`[mp-webhook] ordem Pix ${ordem.id} ja estava approved - sem dupla ativacao`);
+    return;
+  }
+
+  const nivel: 'premium' | 'max' = ordem.nivel === 'max' ? 'max' : 'premium';
+
+  // Validade de 12 meses a partir de agora.
+  const agora = new Date();
+  const expira = new Date(agora);
+  expira.setFullYear(expira.getFullYear() + 1);
+  const expiraISO = expira.toISOString();
+
+  // Marca a ordem como paga.
+  await supabase
+    .from('pagamentos_pix')
+    .update({
+      status: 'approved',
+      mp_payment_id: String(pagamento.id),
+      pago_em: agora.toISOString(),
+      expira_em: expiraISO,
+    })
+    .eq('id', ordem.id);
+
+  // Ativa o plano com validade.
+  await ativarPlanoPix(ordem.user_id, supabase, nivel, expiraISO);
+
+  console.log(
+    `[mp-webhook] Pix aprovado: user ${ordem.user_id} virou ${nivel} ate ${expiraISO}`
+  );
 }
 
 // GET pra status/debug

@@ -25,6 +25,9 @@ export type NivelPago = 'premium' | 'max';
  *
  * O parametro `nivel` define o que vai no profiles.plano. Default 'premium'
  * pra compatibilidade com chamadas antigas.
+ *
+ * USADO PELO CARTAO (recorrencia). NAO mexe em plano_expira_em - cartao nao
+ * tem validade fixa (quem controla o fim eh o MP via webhook).
  */
 export async function ativarPremium(
   userId: string,
@@ -139,4 +142,46 @@ export async function marcarPausaPremium(
   });
 
   return { dataApagarISO: dataApagar.toISOString() };
+}
+
+/**
+ * Ativa um plano pago comprado via PIX (pagamento unico, plano anual).
+ *
+ * Diferente do cartao: aqui NAO ha recorrencia. O acesso vale ate
+ * `expiraEmISO` (12 meses a partir do pagamento), gravado em
+ * profiles.plano_expira_em. Um cron diario (/api/pix/expirar-vencidos)
+ * devolve pro Free quem passar dessa data.
+ *
+ * `plano_expira_em` preenchido eh justamente o que diferencia um plano
+ * Pix (tem validade) de um plano cartao (expira_em NULL, MP gerencia).
+ */
+export async function ativarPlanoPix(
+  userId: string,
+  supabase: SupabaseClient,
+  nivel: NivelPago,
+  expiraEmISO: string
+): Promise<void> {
+  await supabase
+    .from('profiles')
+    .update({
+      plano: nivel,
+      cancelado_em: null,
+      dados_apagar_em: null,
+      plano_expira_em: expiraEmISO,
+    })
+    .eq('id', userId);
+
+  const nome = nivel === 'max' ? 'Max' : 'Premium';
+  const dataLegivel = new Date(expiraEmISO).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  await supabase.from('notificacoes').insert({
+    user_id: userId,
+    tipo: 'premium_ativado',
+    titulo: `${nome} ativado!`,
+    mensagem: `Seu pagamento via Pix foi confirmado. Você tem ${nome} até ${dataLegivel}. Vamos te avisar por email perto do vencimento para renovar.`,
+  });
 }
