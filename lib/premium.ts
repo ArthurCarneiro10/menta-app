@@ -185,3 +185,56 @@ export async function ativarPlanoPix(
     mensagem: `Seu pagamento via Pix foi confirmado. Você tem ${nome} até ${dataLegivel}. Vamos te avisar por email perto do vencimento para renovar.`,
   });
 }
+
+
+/**
+ * Expira planos pagos via PIX que passaram da validade (plano_expira_em < now).
+ *
+ * Roda no cron diario /api/pix/expirar-vencidos. Para cada usuario vencido,
+ * reusa marcarCancelamentoPremium: vira Free + grace de 30 dias. Dai o cron
+ * /api/limpeza-vencidos cuida da faxina dos dados bancarios depois do grace.
+ *
+ * So pega quem tem plano_expira_em preenchido (Pix). Cartao tem expira_em NULL,
+ * entao nunca cai aqui (quem expira cartao eh o webhook do MP).
+ *
+ * Retorna quantos foram expirados.
+ */
+export async function expirarPlanosPixVencidos(
+  supabase: SupabaseClient
+): Promise<{ expirados: number; erros: string[] }> {
+  const agora = new Date().toISOString();
+  const erros: string[] = [];
+
+  // Quem ainda esta marcado como pago, mas com validade Pix no passado.
+  const { data: vencidos, error } = await supabase
+    .from('profiles')
+    .select('id')
+    .in('plano', ['premium', 'max'])
+    .lt('plano_expira_em', agora)
+    .not('plano_expira_em', 'is', null);
+
+  if (error) {
+    return { expirados: 0, erros: ['busca falhou: ' + error.message] };
+  }
+  if (!vencidos || vencidos.length === 0) {
+    return { expirados: 0, erros: [] };
+  }
+
+  let expirados = 0;
+  for (const v of vencidos) {
+    try {
+      // Vira Free + grace de 30 dias (mesma logica do cancelamento de cartao).
+      await marcarCancelamentoPremium(v.id, supabase);
+      // Limpa a validade Pix pra nao reprocessar no proximo dia.
+      await supabase
+        .from('profiles')
+        .update({ plano_expira_em: null })
+        .eq('id', v.id);
+      expirados++;
+    } catch (e) {
+      erros.push(`user=${v.id}: ${e instanceof Error ? e.message : 'desconhecido'}`);
+    }
+  }
+
+  return { expirados, erros };
+}

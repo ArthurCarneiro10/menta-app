@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/pix/expirar-vencidos",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/limpeza-vencidos",
+      "schedule": "30 6 * * *"
+    }
+  ]
+}
