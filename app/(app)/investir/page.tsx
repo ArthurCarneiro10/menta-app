@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { TrendingUp, Sparkles, PiggyBank } from 'lucide-react';
+import { TrendingUp, Sparkles, PiggyBank, Target } from 'lucide-react';
 
 // Paleta oficial Menta
 const COLORS = {
@@ -42,11 +42,26 @@ const CARTEIRA = [
 
 const TAXA_ANUAL = 0.10; // 10% ao ano (estimativa conservadora)
 
+// Dicas educativas por prazo da meta (sem recomendar ativo especifico)
+const DICA_CURTO =
+  'Como e uma meta de curto prazo, o ideal e renda fixa segura (ex: Tesouro Selic, CDB de liquidez diaria) - dinheiro que voce vai usar em breve nao combina com renda variavel, que oscila.';
+const DICA_LONGO =
+  'Como e uma meta de prazo mais longo, da pra pensar numa parte em renda variavel (que tem mais potencial e mais oscilacao) alem da renda fixa. Um perfil equilibrado ajuda.';
+
+type MetaResumo = {
+  id: string;
+  titulo: string;
+  valor_alvo: number;
+  valor_atual: number;
+  emoji: string;
+};
+
 export default function InvestirPage() {
   const router = useRouter();
   const [carregando, setCarregando] = useState(true);
   const [totalGasto, setTotalGasto] = useState(0);
   const [aporte, setAporte] = useState(100);
+  const [metas, setMetas] = useState<MetaResumo[]>([]);
 
   useEffect(() => {
     async function carregar() {
@@ -56,6 +71,7 @@ export default function InvestirPage() {
         return;
       }
 
+      // Ultima fatura (pra sugerir o aporte inicial)
       const { data } = await supabase
         .from('faturas')
         .select('total')
@@ -66,10 +82,23 @@ export default function InvestirPage() {
 
       if (data?.total) {
         setTotalGasto(data.total);
-        // sugere 10% dos gastos como ponto de partida (arredondado, entre 50 e 3000)
         const sugestao = Math.min(3000, Math.max(50, Math.round((data.total * 0.1) / 10) * 10));
         setAporte(sugestao);
       }
+
+      // Metas do usuario (pra ponte). So as que ainda faltam dinheiro.
+      const { data: metasData } = await supabase
+        .from('metas')
+        .select('id, titulo, valor_alvo, valor_atual, emoji')
+        .order('criado_em', { ascending: false });
+
+      if (metasData) {
+        const emAndamento = (metasData as MetaResumo[]).filter(
+          (m) => Number(m.valor_atual) < Number(m.valor_alvo)
+        );
+        setMetas(emAndamento);
+      }
+
       setCarregando(false);
     }
     carregar();
@@ -194,8 +223,84 @@ export default function InvestirPage() {
         </div>
       </div>
 
-      {/* Carteira sugerida */}
+      {/* PONTE COM AS METAS */}
       <div style={{ padding: '16px' }}>
+        <div style={{ background: 'white', borderRadius: '20px', padding: '20px', border: '1px solid #eef2ef' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+            <Target size={20} color={COLORS.primaryMid} />
+            <h2 style={{ fontSize: '16px', fontWeight: 700, color: COLORS.ink, margin: 0 }}>
+              Realize suas metas
+            </h2>
+          </div>
+
+          {metas.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '8px 0' }}>
+              <p style={{ fontSize: '13px', color: COLORS.muted, lineHeight: 1.5, margin: '0 0 14px' }}>
+                Voce ainda nao tem metas. Crie uma e a Menta te mostra quanto guardar por mes pra chegar la.
+              </p>
+              <button
+                onClick={() => router.push('/metas')}
+                style={{ background: COLORS.primary, color: COLORS.ink, border: 'none', borderRadius: '999px', padding: '10px 20px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
+              >
+                Criar uma meta
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {metas.map((meta) => {
+                const falta = Math.max(0, Number(meta.valor_alvo) - Number(meta.valor_atual));
+                const por1ano = falta / 12;
+                const por2anos = falta / 24;
+                const por3anos = falta / 36;
+                const ehCurta = por2anos <= 1000;
+
+                return (
+                  <div key={meta.id} style={{ background: '#f4f7f5', borderRadius: '16px', padding: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                      <span style={{ fontSize: '26px' }}>{meta.emoji}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: '15px', fontWeight: 700, color: COLORS.ink, margin: 0 }}>{meta.titulo}</p>
+                        <p style={{ fontSize: '12px', color: COLORS.muted, margin: '2px 0 0' }}>faltam R$ {fmt(falta)}</p>
+                      </div>
+                    </div>
+
+                    <p style={{ fontSize: '11px', color: COLORS.muted, fontWeight: 600, margin: '0 0 8px' }}>
+                      Guardando por mes pra chegar la:
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px' }}>
+                      {[
+                        { anos: '1 ano', valor: por1ano },
+                        { anos: '2 anos', valor: por2anos },
+                        { anos: '3 anos', valor: por3anos },
+                      ].map((p) => (
+                        <div key={p.anos} style={{ background: 'white', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid #eef2ef' }}>
+                          <p style={{ fontSize: '10px', color: COLORS.muted, fontWeight: 600, margin: 0 }}>{p.anos}</p>
+                          <p style={{ fontSize: '14px', fontWeight: 700, color: COLORS.primaryMid, margin: '2px 0 0' }}>
+                            R$ {fmtCurto(p.valor)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ background: 'rgba(122,217,183,0.12)', borderRadius: '12px', padding: '12px' }}>
+                      <p style={{ fontSize: '12px', color: COLORS.primaryMid, lineHeight: 1.5, margin: 0 }}>
+                        💡 {ehCurta ? DICA_CURTO : DICA_LONGO}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <p style={{ fontSize: '10px', color: COLORS.muted, textAlign: 'center', marginTop: '16px', marginBottom: 0 }}>
+            Conteudo educativo, nao e recomendacao de investimento.
+          </p>
+        </div>
+      </div>
+
+      {/* Carteira sugerida */}
+      <div style={{ padding: '0 16px 16px' }}>
         <div style={{ background: 'white', borderRadius: '20px', padding: '20px', border: '1px solid #eef2ef' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
             <TrendingUp size={20} color={COLORS.primaryMid} />
