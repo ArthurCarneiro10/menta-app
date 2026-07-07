@@ -1,81 +1,74 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { LIMITE_ANALISES_FREE, contarAnalisesFeitas } from '@/lib/limites';
-import { analisarTextoFatura } from '@/lib/analise-fatura';
+import { analisarTextoFatura, analisarFaturaVisao } from '@/lib/analise-fatura';
 import { enviarEmailLimiteSeNecessario } from '@/lib/email-limite';
- 
+
 // Permite ate 60s de execucao (plano Hobby). A rota faz download + pdf-parse
 // + chamada de IA em sequencia, que pode passar do limite padrao.
 export const maxDuration = 60;
- 
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
- 
+
 // Teto de tamanho do PDF (defesa em profundidade; o cliente ja valida antes).
 const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10 MB
- 
+
 type Categoria = { nome: string; valor: number };
- 
+
 // Formata numero como R$ 1.234,56 (usado na deteccao de gasto fora do padrao)
 function reais(n: number): string {
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
- 
+
 export async function POST(request: Request) {
   try {
     // ===== SEGURANCA: 1) confirma quem esta chamando =====
     const authHeader = request.headers.get('Authorization') || '';
     const token = authHeader.replace('Bearer ', '').trim();
- 
+
     if (!token) {
       return NextResponse.json({ erro: 'Sessao invalida ou expirada. Entre novamente.' }, { status: 401 });
     }
- 
+
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
       return NextResponse.json({ erro: 'Sessao invalida ou expirada. Entre novamente.' }, { status: 401 });
     }
- 
+
     const body = await request.json();
     const faturaId = body.faturaId;
- 
+
     if (!faturaId) {
       return NextResponse.json({ erro: 'Fatura nao informada.' }, { status: 400 });
     }
- 
+
     // ===== SEGURANCA: 2) busca a fatura e confirma que e do usuario =====
-    // Tras tambem `analisado_em`: se ja tem data, esta eh uma RE-analise (a
-    // fatura ja foi analisada antes) - nao consome cota nem incrementa o
-    // contador vitalicio. Se eh null, eh a primeira analise dessa fatura.
     const { data: fatura, error: faturaError } = await supabase
       .from('faturas')
       .select('id, user_id, arquivo_path, nome_original, analisado_em')
       .eq('id', faturaId)
       .single();
- 
+
     if (faturaError || !fatura) {
       return NextResponse.json({ erro: 'Fatura nao encontrada.' }, { status: 404 });
     }
- 
+
     if (fatura.user_id !== user.id) {
       return NextResponse.json({ erro: 'Essa fatura nao pertence a sua conta.' }, { status: 403 });
     }
- 
+
     // Primeira analise dessa fatura? (analisado_em vazio = sim)
     const ehReanalise = !!fatura.analisado_em;
- 
+
     // ===== LIMITE DO TIER FREE (barreira real, antes de gastar IA) =====
-    // Premium = ilimitado. Free = LIMITE_ANALISES_FREE analises vitalicias.
-    // O contador (profiles.analises_vitalicias) so sobe e nunca diminui, entao
-    // deletar faturas NAO devolve cota. Re-analise nao checa limite: o usuario
-    // ja gastou essa cota quando analisou a fatura pela primeira vez.
     const { data: perfil } = await supabase
       .from('profiles')
       .select('plano')
       .eq('id', user.id)
       .single();
- 
+
     if (perfil?.plano !== 'premium' && perfil?.plano !== 'max' && !ehReanalise) {
       const jaAnalisadas = await contarAnalisesFeitas(user.id, supabase);
       if (jaAnalisadas >= LIMITE_ANALISES_FREE) {
@@ -89,25 +82,25 @@ export async function POST(request: Request) {
         );
       }
     }
- 
+
     const arquivoPath = fatura.arquivo_path;
- 
+
     if (!arquivoPath) {
       return NextResponse.json({ erro: 'Arquivo da fatura nao encontrado.' }, { status: 404 });
     }
- 
+
     // 1. Baixa o PDF
     const { data: arquivo, error: downloadError } = await supabase.storage
       .from('faturas')
       .download(arquivoPath);
- 
+
     if (downloadError || !arquivo) {
       return NextResponse.json(
         { erro: 'Nao foi possivel baixar o arquivo: ' + (downloadError?.message || 'desconhecido') },
         { status: 500 }
       );
     }
- 
+
     // 1b. Defesa em profundidade: rejeita arquivo grande demais antes de processar
     if (arquivo.size > MAX_PDF_BYTES) {
       return NextResponse.json(
@@ -115,7 +108,7 @@ export async function POST(request: Request) {
         { status: 413 }
       );
     }
- 
+
     // 2. Extrai o texto
     const arrayBuffer = await arquivo.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -123,26 +116,30 @@ export async function POST(request: Request) {
     const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default;
     const dados = await pdfParse(buffer);
     const textoFatura = dados.text;
- 
-    if (!textoFatura || textoFatura.trim().length < 20) {
-      return NextResponse.json(
-        { erro: 'O PDF parece nao ter texto legivel (pode ser imagem escaneada).' },
-        { status: 422 }
-      );
-    }
- 
-    // 3. Analisa o texto (prompt + IA + reconcilia agora vivem em lib/analise-fatura)
+
+    // PDF tem texto selecionavel? Se nao (fatura escaneada/foto), a gente
+    // NAO rejeita mais - cai pro caminho de visao do Claude.
+    const temTextoLegivel = !!textoFatura && textoFatura.trim().length >= 20;
+
+    // 3. Analisa.
+    //    - Com texto: caminho padrao (rapido/barato).
+    //    - Sem texto (escaneada): visao do Claude le a imagem do PDF.
     let analise;
     try {
-      analise = await analisarTextoFatura(textoFatura);
+      if (temTextoLegivel) {
+        analise = await analisarTextoFatura(textoFatura);
+      } else {
+        const base64Pdf = buffer.toString('base64');
+        analise = await analisarFaturaVisao(base64Pdf);
+      }
     } catch (e) {
       return NextResponse.json(
         { erro: e instanceof Error ? e.message : 'Falha na analise da IA' },
         { status: 500 }
       );
     }
- 
-    // 4. Salva no banco (sem o campo truncado, que eh so um aviso de runtime)
+
+    // 4. Salva no banco
     await supabase
       .from('faturas')
       .update({
@@ -154,13 +151,8 @@ export async function POST(request: Request) {
         analisado_em: new Date().toISOString(),
       })
       .eq('id', faturaId);
- 
-    // 4b. CONTADOR VITALICIO: incrementa +1 SO se foi a primeira analise dessa
-    //     fatura. Re-analise nao incrementa. Usa funcao atomica no banco
-    //     (incrementar_analises) pra evitar erro de contagem. Tolerante a falha:
-    //     se o incremento falhar, a analise ja foi salva e nao quebramos a
-    //     resposta - apenas logamos. O risco (contador nao subir num erro raro)
-    //     eh aceitavel e nao cobra nem bloqueia ninguem errado.
+
+    // 4b. CONTADOR VITALICIO: incrementa +1 SO se foi a primeira analise dessa fatura.
     if (!ehReanalise) {
       try {
         const { error: incError } = await supabase.rpc('incrementar_analises', {
@@ -173,7 +165,7 @@ export async function POST(request: Request) {
         console.error('[analisar] excecao incrementando contador:', e);
       }
     }
- 
+
     // 5. Notificacao de fatura analisada (com o insight como mensagem)
     await supabase.from('notificacoes').insert({
       user_id: user.id,
@@ -181,9 +173,8 @@ export async function POST(request: Request) {
       titulo: 'Fatura analisada com sucesso',
       mensagem: analise.insight || 'Sua fatura foi processada e categorizada pela IA.',
     });
- 
+
     // 6. GASTO FORA DO PADRAO
-    //    Compara cada categoria com a fatura anterior. Se disparou, gera notificacao.
     try {
       const { data: anterioresArray } = await supabase
         .from('faturas')
@@ -193,10 +184,10 @@ export async function POST(request: Request) {
         .neq('id', faturaId)
         .order('criado_em', { ascending: false })
         .limit(1);
- 
+
       const anterior = anterioresArray?.[0];
       const categoriasAnteriores = Array.isArray(anterior?.categorias) ? anterior.categorias : null;
- 
+
       if (categoriasAnteriores) {
         const mapaAnterior = new Map<string, number>();
         for (const c of categoriasAnteriores as Categoria[]) {
@@ -204,29 +195,26 @@ export async function POST(request: Request) {
             mapaAnterior.set(c.nome, c.valor);
           }
         }
- 
+
         type Spike = { categoria: string; pct: number; novoValor: number; anteriorValor: number; diff: number };
         const spikes: Spike[] = [];
- 
+
         for (const c of analise.categorias) {
           const ant = mapaAnterior.get(c.nome) || 0;
           const diff = c.valor - ant;
- 
-          // Regra: subiu >= 50% E aumento >= R$ 50
-          // Categoria nova (ant === 0): so alerta se valor novo >= R$ 50
+
           const subiuMuito = ant > 0 ? (diff / ant) >= 0.5 : c.valor >= 50;
           const aumentoRelevante = diff >= 50;
- 
+
           if (subiuMuito && aumentoRelevante) {
             const pct = ant > 0 ? Math.round((diff / ant) * 100) : 0;
             spikes.push({ categoria: c.nome, pct, novoValor: c.valor, anteriorValor: ant, diff });
           }
         }
- 
-        // Ordena por maior aumento absoluto e pega top 3
+
         spikes.sort((a, b) => b.diff - a.diff);
         const topSpikes = spikes.slice(0, 3);
- 
+
         if (topSpikes.length > 0) {
           const partes = topSpikes.map((s) => {
             if (s.anteriorValor === 0) {
@@ -234,11 +222,11 @@ export async function POST(request: Request) {
             }
             return `${s.categoria}: subiu ${s.pct}% (R$ ${reais(s.novoValor)})`;
           });
- 
+
           const titulo = topSpikes.length === 1
             ? 'Um gasto subiu bastante este mes'
             : 'Alguns gastos dispararam este mes';
- 
+
           await supabase.from('notificacoes').insert({
             user_id: user.id,
             tipo: 'gasto_disparou',
@@ -248,10 +236,9 @@ export async function POST(request: Request) {
         }
       }
     } catch (e) {
-      // Se a comparacao falhar por qualquer motivo, nao quebra a analise principal.
       console.error('Falha ao detectar gasto fora do padrao:', e);
     }
- 
+
     // 7. Retorna a analise (truncado avisa a UI se a fatura foi cortada)
     return NextResponse.json({
       sucesso: true,
