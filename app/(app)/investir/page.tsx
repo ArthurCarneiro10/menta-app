@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { TrendingUp, Sparkles, PiggyBank, Target, ShieldCheck, RotateCcw } from 'lucide-react';
+import CartoesEducativos from '@/components/CartoesEducativos';
 
 const COLORS = {
   primary: '#7ad9b7',
@@ -452,4 +453,5 @@ export default function InvestirPage() {
       </div>
     </div>
   );
+  <div style={{ padding: '0 16px 16px' }}><CartoesEducativos /></div>
 }
