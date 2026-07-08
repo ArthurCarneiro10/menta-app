@@ -447,11 +447,11 @@ export default function InvestirPage() {
                 </span>
               </div>
             ))}
+            <div style={{ padding: '0 16px 16px' }}><CartoesEducativos /></div>
           </div>
           <p style={nota}>Sugestao educativa, nao e recomendacao de investimento.</p>
         </div>
       </div>
     </div>
   );
-  <div style={{ padding: '0 16px 16px' }}><CartoesEducativos /></div>
 }
