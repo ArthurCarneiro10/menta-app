@@ -169,14 +169,17 @@ async function appleFetch<T>(endpoint: string): Promise<T> {
 // API publica
 // =========================================================================
 
+type UltimaTransacao = {
+  status: number;
+  originalTransactionId: string;
+  signedTransactionInfo: string;
+  signedRenewalInfo?: string;
+};
+
 type RespostaStatus = {
   data?: {
-    lastTransactions?: {
-      status: number;
-      originalTransactionId: string;
-      signedTransactionInfo: string;
-      signedRenewalInfo?: string;
-    }[];
+    subscriptionGroupIdentifier?: string;
+    lastTransactions?: UltimaTransacao[];
   }[];
 };
 
@@ -185,19 +188,54 @@ type RespostaStatus = {
  * transactionId (ou originalTransactionId).
  *
  * Esta eh a FONTE DA VERDADE - equivalente ao getPreapproval() do MP.
- * Se a chamada falhar ou o bundleId nao bater, lanca erro.
+ *
+ * ATENCAO (bug corrigido): o endpoint /inApps/v1/subscriptions/{id} devolve
+ * TODAS as transacoes do GRUPO de assinaturas, nao so a que foi comprada.
+ * Como Premium e Max estao no mesmo grupo, pegar `lastTransactions[0]` as
+ * cegas podia retornar o produto errado (compramos Premium e vinha Max).
+ *
+ * Agora procuramos a transacao cujo transactionId (ou originalTransactionId)
+ * bate com o que o app informou. So caimos no fallback se nao acharmos.
  */
 export async function getStatusAssinatura(transactionId: string): Promise<StatusAssinatura> {
   const resposta = await appleFetch<RespostaStatus>(
     `/inApps/v1/subscriptions/${transactionId}`
   );
 
-  const ultima = resposta.data?.[0]?.lastTransactions?.[0];
-  if (!ultima) {
+  // Junta as transacoes de todos os grupos retornados.
+  const todas: UltimaTransacao[] = [];
+  for (const grupo of resposta.data || []) {
+    for (const tx of grupo.lastTransactions || []) {
+      todas.push(tx);
+    }
+  }
+
+  if (todas.length === 0) {
     throw new Error('Apple nao retornou transacao para esse id');
   }
 
-  const transacao = decodificarJWS<AppleTransacao>(ultima.signedTransactionInfo);
+  // Decodifica todas e acha a que corresponde ao transactionId pedido.
+  const decodificadas = todas.map((tx) => ({
+    bruta: tx,
+    payload: decodificarJWS<AppleTransacao>(tx.signedTransactionInfo),
+  }));
+
+  let escolhida = decodificadas.find(
+    (d) =>
+      d.payload.transactionId === transactionId ||
+      d.payload.originalTransactionId === transactionId ||
+      d.bruta.originalTransactionId === transactionId
+  );
+
+  if (!escolhida) {
+    // Fallback: nenhuma bateu. Prefere uma ATIVA (status 1) a uma qualquer.
+    console.warn(
+      `[apple-iap] transacao ${transactionId} nao encontrada entre ${todas.length} do grupo; usando fallback`
+    );
+    escolhida = decodificadas.find((d) => d.bruta.status === 1) || decodificadas[0];
+  }
+
+  const transacao = escolhida.payload;
 
   // Defesa: garante que a transacao pertence AO NOSSO app.
   if (transacao.bundleId !== BUNDLE_ID) {
@@ -205,9 +243,13 @@ export async function getStatusAssinatura(transactionId: string): Promise<Status
   }
 
   // status 1 = ativa, 4 = periodo de graca (ainda com acesso)
-  const ativa = ultima.status === 1 || ultima.status === 4;
+  const ativa = escolhida.bruta.status === 1 || escolhida.bruta.status === 4;
 
-  return { ativa, transacao, status: ultima.status };
+  console.log(
+    `[apple-iap] status: produto=${transacao.productId} status=${escolhida.bruta.status} (de ${todas.length} no grupo)`
+  );
+
+  return { ativa, transacao, status: escolhida.bruta.status };
 }
 
 /** Ambiente atual (util em logs e no endpoint de debug). */
