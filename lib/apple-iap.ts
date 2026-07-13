@@ -197,8 +197,18 @@ async function appleFetchNoHost<T>(host: string, endpoint: string): Promise<T> {
 
   const texto = await res.text();
 
-  // A Apple retorna 404 + JSON { errorCode: 4040010, ... } quando a transacao
-  // nao existe NAQUELE ambiente. Isso eh o gatilho do fallback, nao um erro real.
+  // Gatilhos de FALLBACK de ambiente (nao sao erro real - significam
+  // "essa transacao nao pertence a este host, tente o outro"):
+  //
+  //  - 404 + errorCode 4040010 (TransactionIdNotFoundError): a Apple as vezes
+  //    responde assim quando a transacao nao existe no ambiente consultado.
+  //
+  //  - 401: CONFIRMADO em teste real - ao consultar em PRODUCAO uma transacao
+  //    que so existe em SANDBOX (revisor/TestFlight), a Apple responde 401 com
+  //    corpo vazio, em vez de 404. Sem tratar isso, a validacao do revisor
+  //    sempre falha (causa da rejeicao 3.1.1). Como o teste standalone provou
+  //    que a MESMA chave/JWT retorna 200 no sandbox, o 401 aqui nao eh
+  //    credencial invalida - eh ambiente errado. Entao tambem dispara fallback.
   if (res.status === 404) {
     let errorCode: number | undefined;
     try {
@@ -208,9 +218,15 @@ async function appleFetchNoHost<T>(host: string, endpoint: string): Promise<T> {
     }
     if (errorCode === 4040010 || errorCode === undefined) {
       throw new TransacaoNaoEncontradaNoHost(
-        `transacao nao encontrada no host ${host} (${res.status} ${errorCode ?? ''})`
+        `transacao nao encontrada no host ${host} (404 ${errorCode ?? ''})`
       );
     }
+  }
+
+  if (res.status === 401) {
+    throw new TransacaoNaoEncontradaNoHost(
+      `host ${host} respondeu 401 (transacao provavelmente de outro ambiente)`
+    );
   }
 
   throw new Error(`Apple API erro ${res.status} em ${endpoint} (${host}): ${texto}`);
@@ -228,12 +244,25 @@ async function appleFetch<T>(endpoint: string): Promise<{ dados: T; ambiente: 'p
     const dados = await appleFetchNoHost<T>(HOST_PRODUCAO, endpoint);
     return { dados, ambiente: 'production' };
   } catch (e) {
-    if (e instanceof TransacaoNaoEncontradaNoHost) {
-      // Nao existe em producao -> provavelmente eh sandbox (revisor/TestFlight).
+    if (!(e instanceof TransacaoNaoEncontradaNoHost)) {
+      // Erro real ja em producao (ex: 500) - propaga como veio.
+      throw e;
+    }
+    // Producao sinalizou "nao eh aqui" (404/401) -> tenta sandbox.
+    try {
       const dados = await appleFetchNoHost<T>(HOST_SANDBOX, endpoint);
       return { dados, ambiente: 'sandbox' };
+    } catch (e2) {
+      // Se o sandbox TAMBEM recusou por 401/404, ai sim algo esta errado de
+      // verdade (credencial invalida daria 401 nos dois). Mensagem clara.
+      if (e2 instanceof TransacaoNaoEncontradaNoHost) {
+        throw new Error(
+          'Apple recusou a consulta em producao E sandbox (401/404 nos dois). '
+          + 'Verifique APPLE_IAP_KEY_ID, APPLE_IAP_ISSUER_ID e APPLE_IAP_PRIVATE_KEY.'
+        );
+      }
+      throw e2;
     }
-    throw e;
   }
 }
 
