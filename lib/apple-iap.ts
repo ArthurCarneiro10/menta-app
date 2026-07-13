@@ -13,22 +13,43 @@
  * eh o que veio da resposta autenticada da API da Apple, nao o que o app
  * mandou.
  *
+ * ===================================================================
+ * AMBIENTE (producao vs sandbox) - LEIA ISTO:
+ *
+ * A App Store Server API tem DOIS hosts separados:
+ *   producao: https://api.storekit.itunes.apple.com
+ *   sandbox:  https://api.storekit-sandbox.itunes.apple.com
+ *
+ * Uma transacao so existe no host do ambiente em que foi feita:
+ *   - compra de cliente real  -> existe SO em producao
+ *   - compra do revisor Apple  -> existe SO em sandbox (TestFlight/Review usam sandbox)
+ *
+ * Por isso NAO da pra fixar o ambiente por env var: qualquer valor fixo
+ * quebra um dos dois publicos. A regra oficial da Apple eh:
+ *   1) tenta PRODUCAO
+ *   2) se a Apple responder 404 com "TransactionIdNotFoundError" (code
+ *      4040010), refaz a MESMA consulta no SANDBOX
+ *
+ * Assim o mesmo codigo atende cliente real E revisor, sem trocar config.
+ * (Equivalente ao antigo tratamento do status 21007 do verifyReceipt.)
+ * ===================================================================
+ *
  * Env vars (Vercel):
  *   APPLE_IAP_KEY_ID       - Key ID da chave "Compras dentro do app"
  *   APPLE_IAP_ISSUER_ID    - Issuer ID (topo da pagina de Chaves)
  *   APPLE_IAP_PRIVATE_KEY  - conteudo do .p8 (com \n escapados)
  *   APPLE_BUNDLE_ID        - com.mentaapp.mentamobile
- *   APPLE_IAP_AMBIENTE     - 'sandbox' (default) ou 'production'
+ *
+ * (APPLE_IAP_AMBIENTE nao eh mais usado pra decidir o host - o fallback
+ *  cobre os dois automaticamente. Pode remover da Vercel se quiser.)
  */
 
 import crypto from 'crypto';
 
 const BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.mentaapp.mentamobile';
-const EH_PRODUCAO = process.env.APPLE_IAP_AMBIENTE === 'production';
 
-const API_BASE = EH_PRODUCAO
-  ? 'https://api.storekit.itunes.apple.com'
-  : 'https://api.storekit-sandbox.itunes.apple.com';
+const HOST_PRODUCAO = 'https://api.storekit.itunes.apple.com';
+const HOST_SANDBOX = 'https://api.storekit-sandbox.itunes.apple.com';
 
 // =========================================================================
 // Tipos
@@ -47,7 +68,7 @@ export type AppleTransacao = {
   expiresDate?: number;          // epoch ms
   appAccountToken?: string;      // user_id do Supabase (amarra a compra ao usuario)
   revocationDate?: number;       // preenchido se houve reembolso
-  environment?: string;
+  environment?: string;          // "Production" ou "Sandbox"
 };
 
 /** Resposta simplificada do status de assinatura. */
@@ -56,6 +77,8 @@ export type StatusAssinatura = {
   transacao: AppleTransacao;
   /** 1=ativa, 2=expirada, 3=retry de cobranca, 4=periodo de graca, 5=revogada */
   status: number;
+  /** ambiente onde a transacao foi de fato encontrada */
+  ambiente: 'production' | 'sandbox';
 };
 
 // =========================================================================
@@ -95,6 +118,7 @@ function getPrivateKey(): string {
 /**
  * Gera o bearer token exigido pela App Store Server API.
  * Validade curta (20 min) - geramos um por requisicao, simples e seguro.
+ * O MESMO token vale pra producao e sandbox (a chave .p8 nao eh por ambiente).
  */
 function gerarToken(): string {
   const keyId = process.env.APPLE_IAP_KEY_ID;
@@ -146,23 +170,71 @@ export function decodificarJWS<T = Record<string, unknown>>(jws: string): T {
 }
 
 // =========================================================================
-// Cliente HTTP
+// Cliente HTTP com fallback de ambiente
 // =========================================================================
 
-async function appleFetch<T>(endpoint: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${endpoint}`, {
+/** Erro tipado pra quando a transacao nao existe naquele host (404 / 4040010). */
+class TransacaoNaoEncontradaNoHost extends Error {}
+
+/**
+ * Faz UMA chamada num host especifico.
+ * - 200: retorna o JSON
+ * - 404 com errorCode 4040010 (TransactionIdNotFoundError): lanca
+ *   TransacaoNaoEncontradaNoHost pra sinalizar "tenta o outro ambiente"
+ * - qualquer outro erro: lanca Error normal
+ */
+async function appleFetchNoHost<T>(host: string, endpoint: string): Promise<T> {
+  const res = await fetch(`${host}${endpoint}`, {
     headers: {
       Authorization: `Bearer ${gerarToken()}`,
       'Content-Type': 'application/json',
     },
   });
 
-  if (!res.ok) {
-    const texto = await res.text();
-    throw new Error(`Apple API erro ${res.status} em ${endpoint}: ${texto}`);
+  if (res.ok) {
+    return res.json() as Promise<T>;
   }
 
-  return res.json() as Promise<T>;
+  const texto = await res.text();
+
+  // A Apple retorna 404 + JSON { errorCode: 4040010, ... } quando a transacao
+  // nao existe NAQUELE ambiente. Isso eh o gatilho do fallback, nao um erro real.
+  if (res.status === 404) {
+    let errorCode: number | undefined;
+    try {
+      errorCode = JSON.parse(texto)?.errorCode;
+    } catch {
+      // corpo nao-JSON: trata como nao-encontrado mesmo assim
+    }
+    if (errorCode === 4040010 || errorCode === undefined) {
+      throw new TransacaoNaoEncontradaNoHost(
+        `transacao nao encontrada no host ${host} (${res.status} ${errorCode ?? ''})`
+      );
+    }
+  }
+
+  throw new Error(`Apple API erro ${res.status} em ${endpoint} (${host}): ${texto}`);
+}
+
+/**
+ * Consulta um endpoint tentando PRODUCAO primeiro e, se a transacao nao
+ * existir la, SANDBOX. Retorna tambem em qual ambiente achou.
+ *
+ * Essa eh a regra oficial da Apple pra suportar compras reais e de revisao
+ * com o mesmo codigo.
+ */
+async function appleFetch<T>(endpoint: string): Promise<{ dados: T; ambiente: 'production' | 'sandbox' }> {
+  try {
+    const dados = await appleFetchNoHost<T>(HOST_PRODUCAO, endpoint);
+    return { dados, ambiente: 'production' };
+  } catch (e) {
+    if (e instanceof TransacaoNaoEncontradaNoHost) {
+      // Nao existe em producao -> provavelmente eh sandbox (revisor/TestFlight).
+      const dados = await appleFetchNoHost<T>(HOST_SANDBOX, endpoint);
+      return { dados, ambiente: 'sandbox' };
+    }
+    throw e;
+  }
 }
 
 // =========================================================================
@@ -189,6 +261,8 @@ type RespostaStatus = {
  *
  * Esta eh a FONTE DA VERDADE - equivalente ao getPreapproval() do MP.
  *
+ * Tenta producao e cai pra sandbox automaticamente (ver appleFetch).
+ *
  * ATENCAO (bug corrigido): o endpoint /inApps/v1/subscriptions/{id} devolve
  * TODAS as transacoes do GRUPO de assinaturas, nao so a que foi comprada.
  * Como Premium e Max estao no mesmo grupo, pegar `lastTransactions[0]` as
@@ -198,7 +272,7 @@ type RespostaStatus = {
  * bate com o que o app informou. So caimos no fallback se nao acharmos.
  */
 export async function getStatusAssinatura(transactionId: string): Promise<StatusAssinatura> {
-  const resposta = await appleFetch<RespostaStatus>(
+  const { dados: resposta, ambiente } = await appleFetch<RespostaStatus>(
     `/inApps/v1/subscriptions/${transactionId}`
   );
 
@@ -246,13 +320,16 @@ export async function getStatusAssinatura(transactionId: string): Promise<Status
   const ativa = escolhida.bruta.status === 1 || escolhida.bruta.status === 4;
 
   console.log(
-    `[apple-iap] status: produto=${transacao.productId} status=${escolhida.bruta.status} (de ${todas.length} no grupo)`
+    `[apple-iap] status: produto=${transacao.productId} status=${escolhida.bruta.status} ambiente=${ambiente} (de ${todas.length} no grupo)`
   );
 
-  return { ativa, transacao, status: escolhida.bruta.status };
+  return { ativa, transacao, status: escolhida.bruta.status, ambiente };
 }
 
-/** Ambiente atual (util em logs e no endpoint de debug). */
-export function ambienteAtual(): 'sandbox' | 'production' {
-  return EH_PRODUCAO ? 'production' : 'sandbox';
+/**
+ * Ambiente eh decidido por transacao agora (nao ha mais ambiente "global").
+ * Mantido pra compatibilidade com quem importa ambienteAtual() em logs/debug.
+ */
+export function ambienteAtual(): 'auto (producao->sandbox)' {
+  return 'auto (producao->sandbox)';
 }
