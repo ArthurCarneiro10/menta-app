@@ -3,41 +3,49 @@
  *
  * FAQ minimo + email de contato. Pode evoluir pra ter chat,
  * formulario de ticket, etc no futuro.
+ *
+ * ATENCAO: os precos citados aqui precisam bater com app/termos/page.tsx
+ * e com o que o app cobra de verdade. Divergencia = rejeicao na Apple e
+ * problema com o consumidor. Se mudar preco, atualize nos dois lugares.
  */
- 
+
 'use client';
- 
+
 import { useState } from 'react';
-import type { Metadata } from 'next';
- 
+
 const FAQS = [
   {
     pergunta: 'Como o Menta funciona?',
     resposta:
-      'No plano Free você envia PDFs de fatura de cartão e a IA categoriza. No Premium, você conecta seus bancos via Open Finance e tudo sincroniza automaticamente. Em qualquer plano, você vê pra onde foi seu dinheiro.',
+      'No plano Free você envia PDFs de fatura de cartão e a IA categoriza. No Max, você conecta seus bancos via Open Finance e tudo sincroniza automaticamente. Em qualquer plano, você vê pra onde foi seu dinheiro.',
+  },
+  {
+    pergunta: 'Qual a diferença entre Free, Premium e Max?',
+    resposta:
+      'Free: análise de até 5 faturas e IA financeira limitada. Premium: análise de faturas e IA sem limites. Max: tudo do Premium mais Open Finance — conecte seus bancos e tenha sincronização automática, saldo em tempo real e histórico ilimitado.',
   },
   {
     pergunta: 'A conexão com meu banco é segura?',
     resposta:
-      'Sim. Usamos Pluggy, autorizada pelo Banco Central do Brasil. Open Finance é regulado e usa criptografia de ponta a ponta. Você autoriza explicitamente cada conexão, e pode desconectar quando quiser.',
+      'Sim. Usamos Pluggy, autorizada pelo Banco Central do Brasil. Open Finance é regulado e usa criptografia de ponta a ponta. Você autoriza explicitamente cada conexão, e pode desconectar quando quiser. A conexão bancária está disponível no plano Max.',
   },
   {
-    pergunta: 'Quanto custa o Premium?',
+    pergunta: 'Quanto custam os planos?',
     resposta:
-      'R$ 39,90 por mês ou R$ 358,80 por ano (~R$ 29,90/mês, economia de 25%). Ambos com 7 dias grátis pra experimentar.',
+      'Pelo site ou Android: Premium sai R$ 29,90/mês ou R$ 299,00/ano; Max sai R$ 49,90/mês ou R$ 499,00/ano. Assinaturas no cartão têm 7 dias grátis, e os planos anuais também podem ser pagos via Pix. Pelo aplicativo do iPhone, a assinatura é vendida pela Apple: Premium R$ 34,90/mês ou R$ 349,90/ano; Max R$ 58,90/mês ou R$ 589,90/ano, sem período de teste.',
   },
   {
-    pergunta: 'Como cancelo o Premium?',
+    pergunta: 'Como cancelo minha assinatura?',
     resposta:
-      'Em Configurações > Plano, clica em "Cancelar Premium". O cancelamento é imediato e suas conexões bancárias ficam guardadas por 30 dias caso queira reativar. Após esse prazo, são apagadas.',
+      'Depende de onde você assinou. Se contratou pelo aplicativo do iPhone, o cancelamento é feito nos Ajustes do iPhone > seu nome > Assinaturas. Se contratou pelo site ou Android, vá em Configurações > Plano e clique em "Cancelar". Em ambos os casos você mantém o acesso até o fim do período já pago, e suas conexões bancárias ficam guardadas por 30 dias caso queira reativar.',
   },
   {
-    pergunta: 'Vocês têm direito a reembolso?',
+    pergunta: 'Tenho direito a reembolso?',
     resposta:
-      'Conforme o Código de Defesa do Consumidor, você tem 7 dias após a contratação pra desistir e receber reembolso integral. Solicite por email se for o caso.',
+      'Se você assinou pelo site ou Android, o Código de Defesa do Consumidor garante 7 dias após a contratação pra desistir e receber reembolso integral — solicite por email. Se assinou pelo aplicativo do iPhone, os reembolsos são tratados diretamente pela Apple, em reportaproblem.apple.com.',
   },
   {
-    pergunta: 'O que acontece se eu cancelar minha conta?',
+    pergunta: 'O que acontece se eu excluir minha conta?',
     resposta:
       'Em Configurações > Excluir conta, sua conta é apagada permanentemente. Dados pessoais são removidos em até 30 dias. Logs fiscais ficam pelo prazo legal (5 anos).',
   },
@@ -49,17 +57,17 @@ const FAQS = [
   {
     pergunta: 'Posso usar o Menta sem conectar banco?',
     resposta:
-      'Sim! O plano Free trabalha com upload de PDFs de fatura. A IA extrai e categoriza as transações. Sem necessidade de Open Finance.',
+      'Sim! Os planos Free e Premium trabalham com upload de PDFs de fatura. A IA extrai e categoriza as transações. Sem necessidade de Open Finance.',
   },
 ];
- 
+
 export default function SuportePage() {
   const [abertoIdx, setAbertoIdx] = useState<number | null>(null);
- 
+
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
       <div className="max-w-2xl mx-auto px-6 py-12 pb-32">
- 
+
         <header className="mb-10">
           <div className="flex items-center justify-between mb-6">
             <a
@@ -87,7 +95,7 @@ export default function SuportePage() {
             Confere as perguntas frequentes abaixo. Se não encontrar resposta, escreve direto pra gente.
           </p>
         </header>
- 
+
         {/* CTA email destacado */}
         <div className="rounded-3xl p-6 bg-[#7ad9b7]/10 border border-[#7ad9b7]/30 mb-10">
           <div className="flex items-start gap-4">
@@ -111,7 +119,7 @@ export default function SuportePage() {
             </div>
           </div>
         </div>
- 
+
         {/* FAQ */}
         <section>
           <h2 className="text-lg font-bold text-white mb-4 tracking-tight">
@@ -155,7 +163,7 @@ export default function SuportePage() {
             ))}
           </div>
         </section>
- 
+
         {/* Links pra docs legais */}
         <footer className="mt-16 pt-8 border-t border-white/10">
           <div className="flex flex-wrap gap-4 text-sm">
@@ -170,7 +178,7 @@ export default function SuportePage() {
             </a>
           </div>
         </footer>
- 
+
       </div>
     </main>
   );
