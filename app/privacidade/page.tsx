@@ -7,22 +7,32 @@
  * especialista em LGPD.
  *
  * Atualize a data "Ultima atualizacao" sempre que mudar algo aqui.
+ *
+ * ===================================================================
+ * ATENCAO - esta pagina eh a URL declarada no campo "Privacy Policy"
+ * do App Store Connect E o link de "Politica de Privacidade" da tela
+ * de Planos do app iOS. O revisor da Apple ABRE este link.
+ *
+ * Precisa ser publica (sem login) e coerente com app/termos/page.tsx:
+ *   - Open Finance eh do plano MAX (nao Premium)
+ *   - no iOS quem processa o pagamento eh a APPLE (nao o Mercado Pago)
+ * ===================================================================
  */
- 
+
 import type { Metadata } from 'next';
- 
+
 export const metadata: Metadata = {
   title: 'Política de Privacidade · Menta',
   description: 'Como o Menta coleta, usa e protege seus dados.',
 };
- 
-const ULTIMA_ATUALIZACAO = '08 de junho de 2026';
- 
+
+const ULTIMA_ATUALIZACAO = '14 de julho de 2026';
+
 export default function PrivacidadePage() {
   return (
     <main className="min-h-screen bg-linear-to-br from-[#0c2019] via-[#183e31] to-[#0c1f18]">
       <div className="max-w-2xl mx-auto px-6 py-12 pb-32">
- 
+
         <header className="mb-10">
           <div className="flex items-center justify-between mb-6">
             <a
@@ -47,9 +57,9 @@ export default function PrivacidadePage() {
             Última atualização: {ULTIMA_ATUALIZACAO}
           </p>
         </header>
- 
+
         <article className="space-y-6 text-white/75 text-sm leading-relaxed">
- 
+
           <Section titulo="Resumo rápido">
             <p>
               Para você entender em 30 segundos:
@@ -59,10 +69,10 @@ export default function PrivacidadePage() {
               <li>Seus dados bancários nunca são vendidos ou compartilhados pra publicidade</li>
               <li>Você pode pedir exclusão da sua conta e dados a qualquer momento</li>
               <li>Conexão bancária é via Pluggy, autorizada pelo Banco Central</li>
-              <li>Pagamentos vão direto pro Mercado Pago — não armazenamos dados de cartão</li>
+              <li>Não armazenamos dados de cartão: pagamentos são processados pela Apple (no app do iPhone) ou pelo Mercado Pago (no site e no Android)</li>
             </ul>
           </Section>
- 
+
           <Section titulo="1. Quem é o controlador">
             <p>
               Para fins da Lei Geral de Proteção de Dados (LGPD - Lei
@@ -83,7 +93,7 @@ export default function PrivacidadePage() {
               </a>
             </p>
           </Section>
- 
+
           <Section titulo="2. Quais dados coletamos">
             <p><strong>Dados de cadastro</strong></p>
             <ul className="list-disc pl-6 space-y-1">
@@ -93,33 +103,34 @@ export default function PrivacidadePage() {
               <li>Foto de perfil (opcional)</li>
               <li>Senha (armazenada criptografada via Supabase Auth)</li>
             </ul>
- 
-            <p className="pt-2"><strong>Dados financeiros (plano Premium)</strong></p>
+
+            <p className="pt-2"><strong>Dados financeiros (conexão bancária — plano Max)</strong></p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Conexões com bancos via Open Finance (Pluggy)</li>
               <li>Contas bancárias e cartões vinculados (nome do banco, saldo, número parcial)</li>
               <li>Histórico de transações: data, descrição, valor, categoria</li>
             </ul>
- 
-            <p className="pt-2"><strong>Dados financeiros (plano Free)</strong></p>
+
+            <p className="pt-2"><strong>Dados financeiros (análise de faturas — todos os planos)</strong></p>
             <ul className="list-disc pl-6 space-y-1">
               <li>PDFs de faturas de cartão que você opcionalmente envia</li>
               <li>Transações extraídas dos PDFs pela IA</li>
             </ul>
- 
+
             <p className="pt-2"><strong>Dados de assinatura</strong></p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Plano contratado, status de pagamento, datas de cobrança</li>
-              <li><strong>Não armazenamos dados de cartão</strong> — toda operação financeira passa direto pelo Mercado Pago</li>
+              <li>Identificador da transação fornecido pela loja (Apple) ou pelo processador (Mercado Pago), usado apenas para confirmar sua assinatura</li>
+              <li><strong>Não armazenamos dados de cartão</strong> — toda operação financeira passa direto pela Apple ou pelo Mercado Pago</li>
             </ul>
- 
+
             <p className="pt-2"><strong>Dados técnicos</strong></p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Logs de acesso e uso (IP, navegador, sistema operacional)</li>
               <li>Métricas anônimas de uso do app (visitas, ações)</li>
             </ul>
           </Section>
- 
+
           <Section titulo="3. Para que usamos seus dados">
             <ul className="list-disc pl-6 space-y-1">
               <li><strong>Operar o serviço:</strong> exibir suas finanças, categorizar transações, oferecer funcionalidades</li>
@@ -131,7 +142,7 @@ export default function PrivacidadePage() {
               <li><strong>Cumprimento legal:</strong> obrigações fiscais, regulatórias e judiciais</li>
             </ul>
           </Section>
- 
+
           <Section titulo="4. Base legal (LGPD)">
             <p>
               O tratamento dos seus dados se baseia em:
@@ -143,17 +154,19 @@ export default function PrivacidadePage() {
               <li><strong>Cumprimento de obrigação legal</strong> (art. 7º, II): pra atender exigências fiscais e regulatórias</li>
             </ul>
           </Section>
- 
+
           <Section titulo="5. Compartilhamento com terceiros">
             <p>
               Compartilhamos dados estritamente com operadores necessários
               pra entregar o serviço:
             </p>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Pluggy</strong> (Open Finance): conecta suas contas bancárias com sua autorização explícita. Regulada pelo Banco Central (CNPJ 37.943.755/0001-30).</li>
-              <li><strong>Supabase</strong>: armazena seus dados (banco de dados gerenciado, com criptografia)</li>
-              <li><strong>Mercado Pago</strong>: processa pagamentos e gerencia assinaturas. Dados de cartão ficam exclusivamente lá.</li>
-              <li><strong>Anthropic (Claude)</strong>: processa descrições de transações para categorização. Não recebem seu nome, email, ou identificadores pessoais — apenas a descrição da transação.</li>
+              <li><strong>Pluggy</strong> (Open Finance): conecta suas contas bancárias com sua autorização explícita, no plano Max. Regulada pelo Banco Central (CNPJ 37.943.755/0001-30).</li>
+              <li><strong>Supabase</strong>: armazena seus dados e cuida da autenticação (banco de dados gerenciado, com criptografia)</li>
+              <li><strong>Apple</strong>: processa as assinaturas contratadas pelo aplicativo do iPhone e iPad. Os dados de pagamento ficam exclusivamente com a Apple; recebemos apenas a confirmação da assinatura.</li>
+              <li><strong>Mercado Pago</strong>: processa as assinaturas contratadas pelo site e pelo aplicativo Android. Dados de cartão ficam exclusivamente lá.</li>
+              <li><strong>OpenRouter e Anthropic (Claude)</strong>: processam descrições de transações para categorização e para o chat de IA. Não recebem seu nome, email, ou identificadores pessoais — apenas a descrição da transação.</li>
+              <li><strong>Resend</strong>: envio de emails transacionais</li>
               <li><strong>Vercel</strong>: hospedagem do aplicativo, com logs técnicos básicos</li>
             </ul>
             <p>
@@ -161,7 +174,7 @@ export default function PrivacidadePage() {
               anunciantes, brokers ou empresas de marketing.
             </p>
           </Section>
- 
+
           <Section titulo="6. Seus direitos">
             <p>
               Conforme a LGPD, você tem direito a:
@@ -190,7 +203,7 @@ export default function PrivacidadePage() {
               <strong>Configurações &gt; Excluir conta</strong>.
             </p>
           </Section>
- 
+
           <Section titulo="7. Segurança dos dados">
             <p>
               Adotamos medidas razoáveis pra proteger seus dados:
@@ -209,19 +222,19 @@ export default function PrivacidadePage() {
               conforme exige a LGPD.
             </p>
           </Section>
- 
+
           <Section titulo="8. Retenção dos dados">
             <p>
               Mantemos seus dados enquanto sua conta estiver ativa:
             </p>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Após cancelamento Premium</strong>: dados bancários ficam por 30 dias (período de reativação)</li>
+              <li><strong>Após cancelamento de plano pago</strong>: dados bancários ficam por 30 dias (período de reativação)</li>
               <li><strong>Após exclusão de conta</strong>: dados pessoais são removidos em até 30 dias</li>
               <li><strong>Logs de pagamento e nota fiscal</strong>: mantidos por 5 anos por obrigação legal/fiscal</li>
               <li><strong>Logs de segurança</strong>: mantidos por 6 meses</li>
             </ul>
           </Section>
- 
+
           <Section titulo="9. Cookies e tecnologias similares">
             <p>
               Usamos cookies essenciais pra manter sua sessão logada e cookies
@@ -234,14 +247,14 @@ export default function PrivacidadePage() {
               individual.
             </p>
           </Section>
- 
+
           <Section titulo="10. Crianças e adolescentes">
             <p>
               O Menta não é destinado a menores de 18 anos. Não coletamos
               dados de crianças e adolescentes intencionalmente.
             </p>
           </Section>
- 
+
           <Section titulo="11. Alterações nesta política">
             <p>
               Esta política pode ser atualizada periodicamente. Mudanças
@@ -249,7 +262,7 @@ export default function PrivacidadePage() {
               com 7 dias de antecedência.
             </p>
           </Section>
- 
+
           <Section titulo="12. Contato">
             <p>
               Dúvidas, solicitações ou reclamações sobre privacidade:
@@ -275,9 +288,9 @@ export default function PrivacidadePage() {
               .
             </p>
           </Section>
- 
+
         </article>
- 
+
         <footer className="mt-16 pt-8 border-t border-white/10">
           <div className="flex flex-wrap gap-4 text-sm">
             <a href="/termos" className="text-white/50 hover:text-white/80 no-underline transition-colors">
@@ -291,12 +304,12 @@ export default function PrivacidadePage() {
             </a>
           </div>
         </footer>
- 
+
       </div>
     </main>
   );
 }
- 
+
 function Section({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
     <section>
