@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { LIMITE_ANALISES_FREE, contarAnalisesFeitas } from '@/lib/limites';
 import { analisarTextoFatura, analisarFaturaVisao } from '@/lib/analise-fatura';
 import { enviarEmailLimiteSeNecessario } from '@/lib/email-limite';
+import { aplicarRegras } from '@/lib/regras-aprendidas';
 
 // Permite ate 60s de execucao (plano Hobby). A rota faz download + pdf-parse
 // + chamada de IA em sequencia, que pode passar do limite padrao.
@@ -137,6 +138,43 @@ export async function POST(request: Request) {
         { erro: e instanceof Error ? e.message : 'Falha na analise da IA' },
         { status: 500 }
       );
+    }
+
+    // 3b. PARTE 3 - aplica as regras que o usuario ensinou ao corrigir a IA.
+    //     A regra do usuario tem PRIORIDADE sobre a categoria da IA, e marca
+    //     gasto fixo quando ele ja ensinou. Casamento por trecho (palavra-chave).
+    try {
+      const [{ data: regrasCat }, { data: regrasFix }] = await Promise.all([
+        supabase.from('regras_categoria').select('chave, categoria').eq('user_id', user.id),
+        supabase.from('regras_fixo').select('chave, e_fixo').eq('user_id', user.id),
+      ]);
+
+      if ((regrasCat && regrasCat.length) || (regrasFix && regrasFix.length)) {
+        const resultado = aplicarRegras(
+          analise.transacoes || [],
+          regrasCat || [],
+          regrasFix || []
+        );
+        analise.transacoes = resultado.transacoes;
+
+        // Recalcula os totais por categoria, pra o dashboard/gastos baterem
+        // com as transacoes ja corrigidas pelas regras.
+        const mapaCat = new Map<string, number>();
+        for (const t of analise.transacoes as { valor?: number; categoria?: string }[]) {
+          const cat = (t.categoria || 'Outros').trim() || 'Outros';
+          mapaCat.set(cat, (mapaCat.get(cat) || 0) + Math.abs(Number(t.valor || 0)));
+        }
+        analise.categorias = Array.from(mapaCat.entries())
+          .map(([nome, valor]) => ({ nome, valor }))
+          .sort((a, b) => b.valor - a.valor);
+
+        console.log(
+          `[analisar] regras aplicadas: ${resultado.sobrescritasCategoria} categoria(s), ${resultado.marcadasFixo} fixo(s)`
+        );
+      }
+    } catch (e) {
+      // Se as regras falharem, seguimos com o que a IA devolveu (nao bloqueia).
+      console.error('[analisar] falha aplicando regras aprendidas:', e);
     }
 
     // 4. Salva no banco
