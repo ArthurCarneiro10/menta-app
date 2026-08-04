@@ -22,7 +22,7 @@ const FAQS = [
   {
     pergunta: 'Qual a diferença entre Free, Premium e Max?',
     resposta:
-      'Free: análise de até 5 faturas e IA financeira limitada. Premium: análise de faturas e IA sem limites. Max: tudo do Premium mais Open Finance — conecte seus bancos e tenha sincronização automática, saldo em tempo real e histórico ilimitado.',
+      'Free: análise de até 2 faturas e IA financeira limitada. Premium: análise de faturas e IA sem limites. Max: tudo do Premium mais Open Finance — conecte seus bancos e tenha sincronização automática, saldo em tempo real e histórico ilimitado.',
   },
   {
     pergunta: 'A conexão com meu banco é segura?',

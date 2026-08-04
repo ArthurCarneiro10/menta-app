@@ -69,6 +69,8 @@ export default function UploadPage() {
  
   const ehFree = plano === 'free';
   const restantes = Math.max(0, LIMITE_ANALISES_FREE - analisesFeitas);
+  // paywall progressivo: avisa quando resta 1 ou menos (sem bloquear)
+  const naReta = ehFree && restantes <= 1 && !limiteAtingido;
  
   function mostraErro(texto: string) { setAviso({ texto, tipo: 'erro' }); }
   function mostraOk(texto: string) { setAviso({ texto, tipo: 'ok' }); }
@@ -229,31 +231,50 @@ export default function UploadPage() {
           </a>
         </header>
  
-        {/* Banner para usuarios Free - upsell + contador de analises */}
+        {/* Banner Free - paywall progressivo (avisos suaves) */}
         {plano === 'free' && (
-          <div className="rounded-2xl p-4 mb-6 bg-[#7ad9b7]/10 border border-[#7ad9b7]/25 flex items-start gap-3">
-            <div className="w-10 h-10 rounded-full grid place-items-center shrink-0 bg-[#7ad9b7]/20 text-[#7ad9b7]">
+          <div className={`rounded-2xl p-4 mb-6 flex items-start gap-3 border ${naReta ? 'bg-amber-500/10 border-amber-400/30' : 'bg-[#7ad9b7]/10 border-[#7ad9b7]/25'}`}>
+            <div className={`w-10 h-10 rounded-full grid place-items-center shrink-0 ${naReta ? 'bg-amber-500/20 text-amber-300' : 'bg-[#7ad9b7]/20 text-[#7ad9b7]'}`}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
               </svg>
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <p className="text-white font-bold text-sm">Cansado de enviar PDF?</p>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
-                  Premium
-                </span>
-              </div>
-              <p className="text-white/60 text-xs leading-relaxed">
-                Conecte sua conta bancaria direto e a Menta atualiza tudo sozinha, sem voce precisar mandar nada.{' '}
-                <span className="text-white/40">Em breve.</span>
-              </p>
+              {naReta ? (
+                <>
+                  <p className="text-white font-bold text-sm mb-1">Ultima analise gratis</p>
+                  <p className="text-white/60 text-xs leading-relaxed">
+                    Esta e a sua ultima analise no plano gratis. Com o Premium, voce analisa
+                    quantas faturas quiser, sem limite.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <p className="text-white font-bold text-sm">Cansado de enviar PDF?</p>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#7ad9b7]/20 text-[#7ad9b7] border border-[#7ad9b7]/30">
+                      Max
+                    </span>
+                  </div>
+                  <p className="text-white/60 text-xs leading-relaxed">
+                    No plano Max, voce conecta sua conta bancaria direto e a Menta atualiza tudo sozinha, sem PDF.
+                  </p>
+                </>
+              )}
               <p className="text-white/50 text-xs mt-2">
                 Analises gratuitas:{' '}
-                <span className={restantes === 0 ? 'text-red-300 font-semibold' : 'text-[#7ad9b7] font-semibold'}>
+                <span className={restantes === 0 ? 'text-red-300 font-semibold' : (naReta ? 'text-amber-300 font-semibold' : 'text-[#7ad9b7] font-semibold')}>
                   {analisesFeitas} de {LIMITE_ANALISES_FREE} usadas
                 </span>
               </p>
+              {naReta && (
+                <button
+                  onClick={() => router.push('/planos')}
+                  className="mt-3 px-4 py-1.5 rounded-full bg-[#7ad9b7] text-[#010302] font-bold text-xs hover:bg-[#7cdbb9] transition-colors"
+                >
+                  Conhecer o Premium
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -292,19 +313,40 @@ export default function UploadPage() {
             Envie o PDF da fatura do seu cartao para a Menta analisar.
           </p>
  
-          {/* Bloqueio de limite (Free): substitui o fluxo de envio por upsell */}
+          {/* Bloqueio de limite (Free): convite acolhedor em vez de parede */}
           {limiteAtingido ? (
             <div className="rounded-xl p-6 bg-[#7ad9b7]/10 border border-[#7ad9b7]/30 text-center">
-              <p className="text-white font-bold text-lg mb-1">Você atingiu o limite gratuito</p>
+              <div className="w-14 h-14 rounded-full grid place-items-center mx-auto mb-3 bg-[#7ad9b7]/15 text-[#7ad9b7]">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6 7 18.2l1.9-5.8L4 8.8h6.1L12 3z" />
+                </svg>
+              </div>
+              <p className="text-white font-bold text-lg mb-1">Voce aproveitou suas analises gratis</p>
               <p className="text-white/60 text-sm mb-5">
-                Você usou suas {LIMITE_ANALISES_FREE} análises gratuitas. Assine o Premium para análises
-                ilimitadas e conexão automática com o banco.
+                Voce usou suas {LIMITE_ANALISES_FREE} analises do plano gratis. Pra continuar
+                organizando seus gastos sem limite, o Premium te da:
               </p>
+              <div className="text-left space-y-2 mb-6 max-w-xs mx-auto">
+                {['Analise de faturas ilimitada', 'IA financeira sem limite de perguntas', 'Categorizacao automatica de tudo'].map((b) => (
+                  <div key={b} className="flex items-center gap-2">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7ad9b7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
+                    <span className="text-white/85 text-sm">{b}</span>
+                  </div>
+                ))}
+              </div>
               <button
                 onClick={() => router.push('/planos')}
                 className="w-full py-3 bg-[#7ad9b7] text-[#010302] font-bold rounded-lg hover:bg-[#7cdbb9] transition-colors"
               >
-                Ver planos Premium
+                Ver planos
+              </button>
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="w-full mt-3 py-2 text-white/55 hover:text-white/80 text-sm font-medium transition-colors"
+              >
+                Agora nao, voltar
               </button>
             </div>
           ) : (

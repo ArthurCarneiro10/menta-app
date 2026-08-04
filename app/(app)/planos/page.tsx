@@ -48,7 +48,7 @@ const PLANOS = [
     badge: null as string | null,
     destaque: false,
     features: [
-      'Análise de até 3 faturas',
+      'Análise de até 2 faturas',
       'IA financeira: 5 perguntas a cada 4h',
       'Categorização automática dos gastos',
     ],
