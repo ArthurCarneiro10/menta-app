@@ -32,7 +32,7 @@ const FAQS = [
   {
     pergunta: 'Quanto custam os planos?',
     resposta:
-      'Pelo site ou Android: Premium sai R$ 29,90/mês ou R$ 299,00/ano; Max sai R$ 49,90/mês ou R$ 499,00/ano. Assinaturas no cartão têm 7 dias grátis, e os planos anuais também podem ser pagos via Pix. Pelo aplicativo do iPhone, a assinatura é vendida pela Apple: Premium R$ 34,90/mês ou R$ 349,90/ano; Max R$ 58,90/mês ou R$ 589,90/ano, sem período de teste.',
+      'Pelo site ou Android: Premium sai R$ 29,90/mês ou R$ 299,90/ano; Max sai R$ 49,90/mês ou R$ 499,90/ano. Assinaturas no cartão têm 7 dias grátis, e os planos anuais também podem ser pagos via Pix. Pelo aplicativo do iPhone, a assinatura é vendida pela Apple: Premium R$ 29,90/mês ou R$ 299,90/ano; Max R$ 49,90/mês ou R$ 499,90/ano, sem período de teste.',
   },
   {
     pergunta: 'Como cancelo minha assinatura?',

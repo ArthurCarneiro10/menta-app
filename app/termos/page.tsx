@@ -124,10 +124,10 @@ export default function TermosPage() {
               pela <strong>Apple</strong>, por meio de Compra dentro do App (In-App Purchase):
             </p>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Premium Mensal:</strong> R$ 34,90 por mês</li>
-              <li><strong>Premium Anual:</strong> R$ 349,90 por ano</li>
-              <li><strong>Max Mensal:</strong> R$ 58,90 por mês</li>
-              <li><strong>Max Anual:</strong> R$ 589,90 por ano</li>
+              <li><strong>Premium Mensal:</strong> R$ 29,90 por mês</li>
+              <li><strong>Premium Anual:</strong> R$ 299,90 por ano</li>
+              <li><strong>Max Mensal:</strong> R$ 49,90 por mês</li>
+              <li><strong>Max Anual:</strong> R$ 499,90 por ano</li>
             </ul>
             <p>
               As assinaturas contratadas pelo iOS <strong>não incluem período de teste
@@ -150,9 +150,9 @@ export default function TermosPage() {
             </p>
             <ul className="list-disc pl-6 space-y-1">
               <li><strong>Premium Mensal:</strong> R$ 29,90 por mês</li>
-              <li><strong>Premium Anual:</strong> R$ 299,00 por ano</li>
+              <li><strong>Premium Anual:</strong> R$ 299,90 por ano</li>
               <li><strong>Max Mensal:</strong> R$ 49,90 por mês</li>
-              <li><strong>Max Anual:</strong> R$ 499,00 por ano</li>
+              <li><strong>Max Anual:</strong> R$ 499,90 por ano</li>
             </ul>
             <p>
               Assinaturas no <strong>cartão de crédito</strong> incluem{' '}

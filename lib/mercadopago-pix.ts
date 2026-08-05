@@ -31,11 +31,11 @@ function getAccessToken(): string {
 // =========================================================================
 
 // Precos Pix ANUAL: valor cheio do anual (mesmo do cartao, sem desconto).
-//   premium: 299
-//   max:     499
+//   premium: 299.90
+//   max:     499.90
 export const PRECOS_PIX = {
-  premium: 299,
-  max: 499,
+  premium: 299.90,
+  max: 499.90,
 } as const;
 
 export type NivelPagoPix = 'premium' | 'max';

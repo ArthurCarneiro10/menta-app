@@ -32,11 +32,11 @@ type Ciclo = 'mensal' | 'anual';
 const PRECO_TXT: Record<Nivel, Record<Ciclo, { big: string; suf: string; nota: string }>> = {
   premium: {
     mensal: { big: 'R$ 29,90', suf: '/mês', nota: '' },
-    anual: { big: 'R$ 299,00', suf: '/ano', nota: 'equivale a R$ 24,92/mês' },
+    anual: { big: 'R$ 299,90', suf: '/ano', nota: 'equivale a R$ 24,99/mês'  },
   },
   max: {
     mensal: { big: 'R$ 49,90', suf: '/mês', nota: '' },
-    anual: { big: 'R$ 499,00', suf: '/ano', nota: 'equivale a R$ 41,58/mês' },
+    anual: { big: 'R$ 499,90', suf: '/ano', nota: 'equivale a R$ 41,66/mês'  },
   },
 };
 

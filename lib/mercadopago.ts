@@ -222,8 +222,8 @@ export type CicloAssinatura = 'mensal' | 'anual';
 // Precos por nivel e ciclo. Anual = "2 meses gratis".
 // Acesso: PRECOS.premium.mensal, PRECOS.max.anual, etc.
 export const PRECOS = {
-  premium: { mensal: 29.90, anual: 299.00 },
-  max: { mensal: 49.90, anual: 499.00 },
+  premium: { mensal: 29.90, anual: 299.90 },
+  max: { mensal: 49.90, anual: 499.90 },
 } as const;
 
 // Nome amigavel do nivel (usado no "reason" da assinatura e na UI).
