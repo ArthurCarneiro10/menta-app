@@ -4,6 +4,7 @@ import { LIMITE_ANALISES_FREE, contarAnalisesFeitas } from '@/lib/limites';
 import { analisarTextoFatura, analisarFaturaVisao } from '@/lib/analise-fatura';
 import { enviarEmailLimiteSeNecessario } from '@/lib/email-limite';
 import { aplicarRegras } from '@/lib/regras-aprendidas';
+import { enviarPush } from '@/lib/push';
 
 // Permite ate 60s de execucao (plano Hobby). A rota faz download + pdf-parse
 // + chamada de IA em sequencia, que pode passar do limite padrao.
@@ -211,6 +212,13 @@ export async function POST(request: Request) {
       titulo: 'Fatura analisada com sucesso',
       mensagem: analise.insight || 'Sua fatura foi processada e categorizada pela IA.',
     });
+
+    // 5b. Push no celular (Bloco 1). Nao bloqueia - se falhar, segue.
+    enviarPush(user.id, {
+      titulo: 'Sua fatura foi analisada',
+      corpo: analise.insight || 'Toque pra ver seus gastos categorizados.',
+      dados: { rota: '/gastos' },
+    }).catch(() => {});
 
     // 6. GASTO FORA DO PADRAO
     try {
