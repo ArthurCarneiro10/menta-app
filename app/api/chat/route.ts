@@ -21,8 +21,6 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 export async function POST(request: Request) {
   try {
     // ===== SEGURANCA: exige usuario logado =====
-    // Antes esta rota era aberta - qualquer um com a URL podia gastar creditos
-    // de IA. Agora exige Authorization: Bearer <jwt>, igual /api/analisar.
     const authHeader = request.headers.get('Authorization') || '';
     const token = authHeader.replace('Bearer ', '').trim();
 
@@ -44,6 +42,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const pergunta = body.pergunta;
     const dados = body.dados; // resumo dos gastos que a tela manda
+    const consultor = body.consultor === true; // MODO CONSULTOR DE COMPRAS (Bloco 2)
 
     if (!pergunta) {
       return NextResponse.json({ erro: 'Pergunta nao informada' }, { status: 400 });
@@ -51,6 +50,7 @@ export async function POST(request: Request) {
 
     // ===== LIMITE DO CHAT (barreira real, no servidor, antes de gastar IA) =====
     // Premium passa direto. Free entra na contagem por janela.
+    // (o modo consultor usa a mesma cota do chat)
     const { data: perfil } = await supabase
       .from('profiles')
       .select('plano, chat_contador, chat_janela_inicio')
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
           await enviarEmailLimiteSeNecessario(supabase, user.id, user.email);
           const quando =
             horas > 0 ? `${horas}h${min > 0 ? ` ${min}min` : ''}` : `${min}min`;
-            
+
 
           return NextResponse.json(
             {
@@ -106,8 +106,34 @@ export async function POST(request: Request) {
       }
     }
 
-    // Monta o prompt com os dados reais do usuario
-    const prompt = `Voce e a IA financeira do app Menta, um app brasileiro de controle de gastos. Voce conversa com o usuario sobre os gastos DELE, de forma acolhedora, humana e pratica, em portugues do Brasil.
+    // Monta o prompt conforme o modo (consultor de compras OU analise de gastos)
+    let prompt: string;
+
+    if (consultor) {
+      // ===== MODO CONSULTOR DE COMPRAS (Bloco 2) =====
+      prompt = `Voce e a IA financeira do app Menta, atuando como CONSULTORA DE COMPRAS. O usuario esta pensando em fazer uma compra e quer ajuda pra decidir a melhor forma de pagar. Fale em portugues do Brasil, de forma acolhedora, pratica e honesta.
+
+${dados ? `=== CONTEXTO FINANCEIRO DO USUARIO (use pra personalizar, se ajudar) ===\n${dados}\n=== FIM ===\n` : ''}
+
+SEU PAPEL:
+- Ajudar a decidir entre: Pix / a vista, cartao parcelado, ou financiamento/emprestimo.
+- Se faltar informacao pra dar um bom conselho (valor da compra, se tem o dinheiro agora, quantas parcelas, se tem juros), PERGUNTE de forma leve, uma ou duas coisas por vez. Nao despeje um formulario.
+- Quando tiver os dados, compare as formas e recomende a melhor, explicando o porque em linguagem simples.
+
+REGRAS DE OURO:
+1. Se a compra pode ser paga a vista sem apertar o orcamento, geralmente Pix/a vista e melhor (evita juros). Diga isso.
+2. Parcelamento SEM juros pode ser bom pra manter dinheiro em caixa, mas alerte pra nao acumular parcelas.
+3. Parcelamento ou financiamento COM juros quase sempre sai caro - seja honesto sobre quanto pesa.
+4. Se o usuario claramente NAO tem o dinheiro e a compra nao e essencial, oriente com cuidado a repensar ou esperar - sem julgar.
+5. Considere o contexto (gastos altos, metas) pra personalizar. Ex: "isso pesaria na sua meta X".
+6. Faca contas simples quando souber os numeros (ex: 10x de R$300 = R$3.000; com juros de 2% ao mes fica mais). Se nao souber a taxa, assuma sem juros e diga que considerou sem juros.
+
+FORMATO: conversa natural, 2 a 5 frases por resposta. Sem listas longas. No maximo 1 emoji. Termine ajudando o usuario a decidir.
+
+Mensagem do usuario: ${pergunta}`;
+    } else {
+      // ===== MODO NORMAL (analise de gastos) =====
+      prompt = `Voce e a IA financeira do app Menta, um app brasileiro de controle de gastos. Voce conversa com o usuario sobre os gastos DELE, de forma acolhedora, humana e pratica, em portugues do Brasil.
 
 === DADOS REAIS DO USUARIO (ultima fatura analisada) ===
 ${dados}
@@ -125,6 +151,7 @@ Pergunta: "Onde eu mais gastei?"
 Resposta: "Seu maior gasto foi em Compras, R$ 762,22 — a SHEIN sozinha levou R$ 475,83. Alimentacao veio em segundo, R$ 743. Se quiser uma meta facil pro proximo mes, dar uma segurada nas compras online ja faria boa diferenca. 🌱"
 
 Pergunta do usuario: ${pergunta}`;
+    }
 
     // Chama o OpenRouter
     const respostaIA = await fetch('https://openrouter.ai/api/v1/chat/completions', {
