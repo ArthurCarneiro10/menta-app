@@ -7,6 +7,13 @@
  */
  
 const PLUGGY_API_URL = 'https://api.pluggy.ai';
+
+// URL do nosso webhook de producao. A Pluggy manda os eventos pra ca quando um
+// item criado com este connect token muda (item/updated, transactions/*, etc.).
+// Sem passar isso no connect token (ou registrar no dashboard), nenhum webhook
+// chega. Env-driven pra facilitar troca sem deploy.
+const WEBHOOK_URL =
+  process.env.PLUGGY_WEBHOOK_URL || 'https://app.mentaapp.com.br/api/pluggy/webhook';
  
 // Cache do apiKey em memoria do processo (renova a cada 2h)
 let cachedApiKey: string | null = null;
@@ -60,7 +67,7 @@ async function pluggyFetch(path: string, options: RequestInit = {}): Promise<Res
 export async function criarConnectToken(clientUserId: string): Promise<string> {
   const resp = await pluggyFetch('/connect_token', {
     method: 'POST',
-    body: JSON.stringify({ options: { clientUserId } }),
+    body: JSON.stringify({ options: { clientUserId, webhookUrl: WEBHOOK_URL } }),
   });
  
   if (!resp.ok) {
