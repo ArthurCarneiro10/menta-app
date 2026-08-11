@@ -5,6 +5,7 @@ import { analisarTextoFatura, analisarFaturaVisao } from '@/lib/analise-fatura';
 import { enviarEmailLimiteSeNecessario } from '@/lib/email-limite';
 import { aplicarRegras } from '@/lib/regras-aprendidas';
 import { enviarPush } from '@/lib/push';
+import { gerarDiagnostico } from '@/lib/diagnostico';
 
 // Permite ate 60s de execucao (plano Hobby). A rota faz download + pdf-parse
 // + chamada de IA em sequencia, que pode passar do limite padrao.
@@ -213,11 +214,22 @@ export async function POST(request: Request) {
       mensagem: analise.insight || 'Sua fatura foi processada e categorizada pela IA.',
     });
 
-    // 5b. Push no celular (Bloco 1). Nao bloqueia - se falhar, segue.
+    // 5b. BLOCO 3: gera o diagnostico ja com o gasto novo e usa a frase-ancora
+    //     na push. Substitui a push generica "fatura analisada" do Bloco 1.
+    //     Best-effort: se falhar, a analise segue normal e cai no fallback.
+    let resumoDiag = '';
+    try {
+      const diag = await gerarDiagnostico(user.id, supabase);
+      resumoDiag = diag?.resumo || '';
+    } catch (e) {
+      console.error('[analisar] falha gerando diagnostico:', e);
+    }
+
+    // Push no celular (Bloco 1). Nao bloqueia - se falhar, segue.
     enviarPush(user.id, {
-      titulo: 'Sua fatura foi analisada',
-      corpo: analise.insight || 'Toque pra ver seus gastos categorizados.',
-      dados: { rota: '/gastos' },
+      titulo: 'Menta',
+      corpo: resumoDiag || analise.insight || 'Toque pra ver seus gastos.',
+      dados: { rota: '/' },
     }).catch(() => {});
 
     // 6. GASTO FORA DO PADRAO
