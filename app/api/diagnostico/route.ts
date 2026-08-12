@@ -42,6 +42,18 @@ export async function POST(request: Request) {
     const plano = (perfil?.plano as string) || 'free';
     const premium = plano === 'premium' || plano === 'max';
 
+    // Fonte que o usuario DEVERIA ver agora: Max com banco conectado usa banco;
+    // qualquer outro caso usa a fatura PDF.
+    let temConexao = false;
+    if (plano === 'max') {
+      const { count } = await supabase
+        .from('connections')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+      temConexao = (count || 0) > 0;
+    }
+    const fonteEsperada = plano === 'max' && temConexao ? 'banco' : 'fatura';
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let diag: any = perfil?.diagnostico_json || null;
     const geradoEm = perfil?.diagnostico_gerado_em as string | null;
@@ -64,9 +76,10 @@ export async function POST(request: Request) {
 
     // ===== decide se regenera =====
     const precisaGerar =
-      (atualizar && premium) || // botao Atualizar
-      !diag ||                  // nunca gerado
-      faturaNova;               // gasto mudou desde o ultimo
+      (atualizar && premium) ||                 // botao Atualizar
+      !diag ||                                  // nunca gerado
+      faturaNova ||                             // gasto mudou desde o ultimo
+      (diag && diag.fonte !== fonteEsperada);   // fonte mudou (ex: conectou banco)
 
     if (precisaGerar) {
       try {

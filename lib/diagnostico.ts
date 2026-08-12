@@ -26,12 +26,13 @@ export type Diagnostico = {
   resumo: string;
   insights: DiagnosticoInsight[];
   recomendacao: string;
+  fonte?: 'banco' | 'fatura';
 };
 
 type Tx = { descricao: string; valor: number; categoria: string };
 type CatTotal = { nome: string; valor: number };
 type Merchant = { label: string; count: number; total: number; categoria: string };
-type Gastos = { total: number; categorias: CatTotal[]; merchants: Merchant[] };
+type Gastos = { total: number; categorias: CatTotal[]; merchants: Merchant[]; fonte: 'banco' | 'fatura' };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,6 +85,7 @@ async function carregarGastos(
   const plano = (perfil?.plano as string) || 'free';
 
   let txs: Tx[] = [];
+  let usouBanco = false;
 
   // Max com banco conectado -> transacoes reais (Open Finance).
   if (plano === 'max') {
@@ -109,6 +111,7 @@ async function carregarGastos(
         valor: num(t.valor),
         categoria: (t.categoria || 'Outros').trim() || 'Outros',
       }));
+      usouBanco = txs.length > 0;
     }
   }
 
@@ -149,7 +152,7 @@ async function carregarGastos(
         .filter((c) => c.valor > 0)
         .sort((a, b) => b.valor - a.valor);
       const total = totalFatura > 0 ? totalFatura : categorias.reduce((a, c) => a + c.valor, 0);
-      return { total, categorias, merchants: [] };
+      return { total, categorias, merchants: [], fonte: 'fatura' };
     }
     return null; // sem dado nenhum
   }
@@ -175,7 +178,7 @@ async function carregarGastos(
     .sort((a, b) => b.total - a.total)
     .slice(0, TOP_MERCHANTS);
 
-  return { total, categorias, merchants };
+  return { total, categorias, merchants, fonte: usouBanco ? 'banco' : 'fatura' };
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +301,10 @@ export async function gerarDiagnostico(
   if (!diag.resumo) {
     throw new Error('Diagnostico veio sem resumo');
   }
+
+  // Marca de qual fonte esse diagnostico veio (banco vs fatura). O endpoint
+  // usa isso pra regerar quando a fonte do usuario mudou (ex: conectou banco).
+  diag.fonte = gastos.fonte;
 
   await supabase
     .from('profiles')
