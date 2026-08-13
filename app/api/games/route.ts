@@ -50,6 +50,15 @@ export async function POST(request: Request) {
       temConexao = (count || 0) > 0;
     }
 
+    // ===== DESISTIR =====
+    if (acao === 'desistir') {
+      const gameId = String(body?.gameId || '').trim();
+      if (!gameId) return NextResponse.json({ erro: 'Game nao informado.' }, { status: 400 });
+      // So apaga se for do proprio usuario (defesa: filtra por user_id).
+      await supabase.from('games').delete().eq('id', gameId).eq('user_id', user.id);
+      return NextResponse.json({ podeJogar: true, ok: true });
+    }
+
     // ===== CRIAR =====
     if (acao === 'criar') {
       const tipo = body?.tipo as TipoGame;
