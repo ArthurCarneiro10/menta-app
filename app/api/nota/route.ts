@@ -9,6 +9,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
+// Teste rapido no navegador: GET https://app.mentaapp.com.br/api/nota
+export async function GET() {
+  return NextResponse.json({ status: 'nota endpoint ativo' });
+}
+
 export async function POST(request: Request) {
   try {
     const authHeader = request.headers.get('Authorization') || '';
@@ -70,6 +75,7 @@ export async function POST(request: Request) {
       frase: r.frase,
     });
   } catch (erro) {
+    console.error('[nota] erro:', erro);
     return NextResponse.json(
       { erro: 'Erro: ' + (erro instanceof Error ? erro.message : 'desconhecido') },
       { status: 500 },
