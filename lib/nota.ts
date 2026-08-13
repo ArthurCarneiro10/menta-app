@@ -34,6 +34,7 @@ export type NotaResultado = {
   streak: number;
   componentes: NotaComponentes;
   frase: string;
+  primeiraVezHoje: boolean;   // true = primeira abertura do dia (mostra o pop-up)
 };
 
 export type NotaHistoricoDia = { dia: string; nota: number };
@@ -133,6 +134,9 @@ export async function registrarNota(
 
   const compAntes = (rowHoje?.componentes || {}) as Partial<NotaComponentes>;
 
+  // Primeira acao do dia? (ainda nao ha registro de hoje) -> mostra o pop-up.
+  const primeiraVezHoje = !rowHoje;
+
   // Qualquer chamada = a pessoa esta no app hoje.
   const presenca = true;
   const consciencia = !!compAntes.consciencia || acao === 'gastos';
@@ -167,5 +171,5 @@ export async function registrarNota(
     { onConflict: 'user_id,dia' },
   );
 
-  return { nota, streak, componentes, frase };
+  return { nota, streak, componentes, frase, primeiraVezHoje };
 }

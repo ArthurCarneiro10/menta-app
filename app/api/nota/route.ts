@@ -69,6 +69,7 @@ export async function POST(request: Request) {
         frase: r.frase,
         streak: r.streak,
         componentes: r.componentes,
+        primeiraVezHoje: r.primeiraVezHoje,
         ...(historico ? { historico } : {}),
       });
     }
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
       bloqueado: true,
       nota: r.nota,
       frase: r.frase,
+      primeiraVezHoje: r.primeiraVezHoje,
     });
   } catch (erro) {
     console.error('[nota] erro:', erro);
