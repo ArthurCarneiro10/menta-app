@@ -1,0 +1,271 @@
+/**
+ * Bloco 4 fase 2 - Games (logica).
+ *
+ * - sugerirGames: olha os gastos do usuario e sugere desafios (delivery, cafe,
+ *   categoria top). Regras simples (sem IA), reusando a deteccao de padroes.
+ * - GAMES_PRONTOS: lista de prateleira pra escolher.
+ * - criarGame: inicia um game (calcula fim + meta pra economizar).
+ * - listarComProgresso: lista os games e, pro Max, atualiza o progresso ao vivo
+ *   (evitar: falhou se apareceu o gasto; economizar: gasto atual vs meta).
+ *
+ * Rastreamento por plano:
+ *   - Max: dados do banco (transacoes_banco), dia a dia.
+ *   - Premium: avaliado na fatura (onda 4, no /api/analisar).
+ */
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+export type TipoGame = 'evitar' | 'economizar';
+export type StatusGame = 'ativo' | 'completo' | 'falhou' | 'expirado';
+
+export type Game = {
+  id: string;
+  tipo: TipoGame;
+  alvo: string;
+  titulo: string;
+  duracao_dias: number | null;
+  inicio: string;
+  fim: string | null;
+  status: StatusGame;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  progresso: any;
+};
+
+export type Sugestao = {
+  tipo: TipoGame;
+  alvo: string;
+  titulo: string;
+  motivo: string;
+  duracaoDias: number;
+};
+
+type Tx = { descricao: string; valor: number; categoria: string; data: string | null };
+
+// Padroes detectaveis por texto da transacao (alem das 9 categorias).
+const PADROES: { alvo: string; label: string; termos: string[] }[] = [
+  { alvo: 'delivery', label: 'delivery', termos: ['ifood', 'rappi', 'uber eats', 'ubereats', 'delivery', '99food', 'zedelivery'] },
+  { alvo: 'cafe', label: 'cafezinho', termos: ['starbucks', 'cafe', 'coffee', 'cafeteria', 'kopenhagen'] },
+  { alvo: 'transporte_app', label: 'corridas de app', termos: ['uber', '99', 'cabify', '99pop'] },
+];
+
+// ---- helpers ----
+function num(v: unknown): number {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) ? Math.abs(n) : 0;
+}
+function normalizar(s: string): string {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function dataSP(base = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(base);
+}
+function somaDias(dia: string, n: number): string {
+  const d = new Date(dia + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Uma transacao "casa" com o alvo do game? (padrao por texto, ou categoria)
+function casaAlvo(t: Tx, alvo: string): boolean {
+  const padrao = PADROES.find((p) => p.alvo === alvo);
+  if (padrao) {
+    const d = normalizar(t.descricao);
+    return padrao.termos.some((termo) => d.includes(termo));
+  }
+  return t.categoria === alvo;
+}
+
+// Le transacoes recentes (Max: banco; senao: ultima fatura PDF).
+async function lerTransacoes(
+  userId: string, supabase: SupabaseClient, plano: string, temConexao: boolean,
+): Promise<Tx[]> {
+  if (plano === 'max' && temConexao) {
+    const desde = somaDias(dataSP(), -60);
+    const { data } = await supabase
+      .from('transacoes_banco')
+      .select('descricao, merchant_nome, valor, categoria, data')
+      .eq('user_id', userId)
+      .eq('tipo', 'DEBIT')
+      .gte('data', desde)
+      .order('data', { ascending: false })
+      .limit(500);
+    return (data || []).map((t: {
+      descricao: string | null; merchant_nome: string | null;
+      valor: number | string | null; categoria: string | null; data: string | null;
+    }) => ({
+      descricao: (t.descricao || t.merchant_nome || '').trim(),
+      valor: num(t.valor),
+      categoria: (t.categoria || 'Outros').trim() || 'Outros',
+      data: t.data || null,
+    }));
+  }
+
+  // Premium/sem banco -> ultima fatura analisada
+  const { data } = await supabase
+    .from('faturas')
+    .select('transacoes')
+    .eq('user_id', userId)
+    .eq('status', 'analisada')
+    .order('analisado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const txs = Array.isArray(data?.transacoes) ? data!.transacoes : [];
+  return (txs as { descricao?: string; valor?: unknown; categoria?: string }[]).map((t) => ({
+    descricao: String(t?.descricao || '').trim(),
+    valor: num(t?.valor),
+    categoria: String(t?.categoria || 'Outros').trim() || 'Outros',
+    data: null,
+  }));
+}
+
+function reais(n: number): string {
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ---- sugestoes personalizadas ----
+export async function sugerirGames(
+  userId: string, supabase: SupabaseClient, plano: string, temConexao: boolean,
+  alvosOcupados: string[] = [],
+): Promise<Sugestao[]> {
+  const txs = await lerTransacoes(userId, supabase, plano, temConexao);
+  if (txs.length === 0) return [];
+
+  const sugestoes: Sugestao[] = [];
+
+  // 1) padroes por texto (delivery, cafe, app)
+  for (const p of PADROES) {
+    if (alvosOcupados.includes(p.alvo)) continue;
+    const total = txs.filter((t) => casaAlvo(t, p.alvo)).reduce((s, t) => s + t.valor, 0);
+    if (total >= 50) {
+      const dias = p.alvo === 'delivery' ? 15 : 15;
+      sugestoes.push({
+        tipo: 'evitar',
+        alvo: p.alvo,
+        titulo: `${dias} dias sem ${p.label}`,
+        motivo: `Voce gastou R$ ${reais(total)} com ${p.label}. Bora dar um tempo?`,
+        duracaoDias: dias,
+      });
+    }
+  }
+
+  // 2) categoria que mais gastou -> economizar
+  const mapaCat = new Map<string, number>();
+  for (const t of txs) mapaCat.set(t.categoria, (mapaCat.get(t.categoria) || 0) + t.valor);
+  const topCat = Array.from(mapaCat.entries()).sort((a, b) => b[1] - a[1])[0];
+  if (topCat && topCat[1] >= 100 && !alvosOcupados.includes(topCat[0])) {
+    sugestoes.push({
+      tipo: 'economizar',
+      alvo: topCat[0],
+      titulo: `Gaste menos em ${topCat[0]}`,
+      motivo: `${topCat[0]} foi seu maior gasto (R$ ${reais(topCat[1])}). Que tal segurar um pouco?`,
+      duracaoDias: 30,
+    });
+  }
+
+  return sugestoes.slice(0, 3);
+}
+
+// ---- lista de prateleira ----
+export const GAMES_PRONTOS: Sugestao[] = [
+  { tipo: 'evitar', alvo: 'delivery', titulo: '15 dias sem delivery', motivo: 'Cozinhe mais em casa e sinta a diferenca.', duracaoDias: 15 },
+  { tipo: 'evitar', alvo: 'cafe', titulo: '15 dias sem cafezinho fora', motivo: 'Faca em casa e economize sem perceber.', duracaoDias: 15 },
+  { tipo: 'economizar', alvo: 'Compras', titulo: 'Gaste menos em Compras', motivo: 'Segure as comprinhas por impulso este mes.', duracaoDias: 30 },
+  { tipo: 'economizar', alvo: 'Lazer', titulo: 'Gaste menos em Lazer', motivo: 'Curta de graca e guarde uma grana.', duracaoDias: 30 },
+];
+
+// ---- criar ----
+export async function criarGame(
+  userId: string, supabase: SupabaseClient,
+  s: { tipo: TipoGame; alvo: string; titulo: string; duracaoDias: number },
+  plano: string, temConexao: boolean,
+): Promise<Game | null> {
+  const inicio = dataSP();
+  const fim = somaDias(inicio, s.duracaoDias);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let progresso: any = { dias_ok: 0 };
+
+  // economizar: calcula a "meta" (o quanto gastou no periodo anterior) pra bater.
+  if (s.tipo === 'economizar') {
+    const txs = await lerTransacoes(userId, supabase, plano, temConexao);
+    const anteriorInicio = somaDias(inicio, -s.duracaoDias);
+    const gastoAnterior = txs
+      .filter((t) => casaAlvo(t, s.alvo) && (!t.data || t.data >= anteriorInicio))
+      .reduce((acc, t) => acc + t.valor, 0);
+    progresso = { meta: Math.round(gastoAnterior * 100) / 100, gasto_atual: 0 };
+  }
+
+  const { data, error } = await supabase
+    .from('games')
+    .insert({
+      user_id: userId,
+      tipo: s.tipo,
+      alvo: s.alvo,
+      titulo: s.titulo,
+      duracao_dias: s.duracaoDias,
+      inicio,
+      fim,
+      status: 'ativo',
+      progresso,
+    })
+    .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
+    .single();
+
+  if (error) return null;
+  return data as Game;
+}
+
+// ---- listar + progresso ao vivo (Max) ----
+export async function listarComProgresso(
+  userId: string, supabase: SupabaseClient, plano: string, temConexao: boolean,
+): Promise<Game[]> {
+  const { data } = await supabase
+    .from('games')
+    .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
+    .eq('user_id', userId)
+    .order('criado_em', { ascending: false })
+    .limit(20);
+
+  const games = (data || []) as Game[];
+  const hoje = dataSP();
+
+  // Progresso ao vivo so pro Max (tem dado diario). Premium avalia na fatura.
+  if (plano === 'max' && temConexao) {
+    const txs = await lerTransacoes(userId, supabase, plano, temConexao);
+    for (const g of games) {
+      if (g.status !== 'ativo') continue;
+      const doPeriodo = txs.filter((t) => t.data && t.data >= g.inicio);
+      const acabou = g.fim ? hoje >= g.fim : false;
+
+      if (g.tipo === 'evitar') {
+        const apareceu = doPeriodo.some((t) => casaAlvo(t, g.alvo));
+        const diasOk = Math.max(0, Math.min(
+          g.duracao_dias || 0,
+          Math.round((new Date(hoje + 'T12:00:00Z').getTime() - new Date(g.inicio + 'T12:00:00Z').getTime()) / 86400000),
+        ));
+        let novoStatus: StatusGame = 'ativo';
+        if (apareceu) novoStatus = 'falhou';
+        else if (acabou) novoStatus = 'completo';
+        g.progresso = { ...(g.progresso || {}), dias_ok: diasOk };
+        g.status = novoStatus;
+      } else {
+        // economizar
+        const gastoAtual = doPeriodo.filter((t) => casaAlvo(t, g.alvo)).reduce((acc, t) => acc + t.valor, 0);
+        const meta = Number(g.progresso?.meta || 0);
+        let novoStatus: StatusGame = 'ativo';
+        if (acabou) novoStatus = gastoAtual <= meta ? 'completo' : 'falhou';
+        g.progresso = { ...(g.progresso || {}), gasto_atual: Math.round(gastoAtual * 100) / 100, meta };
+        g.status = novoStatus;
+      }
+
+      // persiste se mudou status ou progresso
+      await supabase.from('games')
+        .update({ status: g.status, progresso: g.progresso })
+        .eq('id', g.id);
+    }
+  }
+
+  return games;
+}
