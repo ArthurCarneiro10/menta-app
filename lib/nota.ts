@@ -36,6 +36,21 @@ export type NotaResultado = {
   frase: string;
 };
 
+export type NotaHistoricoDia = { dia: string; nota: number };
+
+// Busca os ultimos N dias de nota (pro grafico/lista da pagina /nota).
+export async function historicoNota(
+  userId: string, supabase: SupabaseClient, dias = 14,
+): Promise<NotaHistoricoDia[]> {
+  const { data } = await supabase
+    .from('nota_diaria')
+    .select('dia, nota')
+    .eq('user_id', userId)
+    .order('dia', { ascending: false })
+    .limit(dias);
+  return ((data || []) as NotaHistoricoDia[]).reverse();
+}
+
 // Data de hoje em America/Sao_Paulo (YYYY-MM-DD). Evita o "dia" virar no
 // horario errado por causa de UTC.
 function dataSP(base = new Date()): string {

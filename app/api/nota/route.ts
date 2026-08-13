@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { registrarNota } from '@/lib/nota';
+import { registrarNota, historicoNota } from '@/lib/nota';
 
 export const maxDuration = 30;
 
@@ -29,9 +29,11 @@ export async function POST(request: Request) {
 
     // Qual acao o app esta reportando: 'abrir' (dashboard) ou 'gastos' (aba Gastos)
     let acao: 'abrir' | 'gastos' = 'abrir';
+    let comHistorico = false;
     try {
       const body = await request.json();
       if (body?.acao === 'gastos') acao = 'gastos';
+      if (body?.historico === true) comHistorico = true;
     } catch {
       // sem body = 'abrir'
     }
@@ -60,12 +62,14 @@ export async function POST(request: Request) {
     // Premium/Max -> nota + frase + streak + componentes (o detalhe).
     // Free -> SO o numero + a frase. Sem streak, sem detalhe (o cadeado).
     if (premium) {
+      const historico = comHistorico ? await historicoNota(user.id, supabase, 14) : undefined;
       return NextResponse.json({
         bloqueado: false,
         nota: r.nota,
         frase: r.frase,
         streak: r.streak,
         componentes: r.componentes,
+        ...(historico ? { historico } : {}),
       });
     }
 
