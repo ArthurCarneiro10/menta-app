@@ -155,14 +155,23 @@ function avaliarUm(
   g: Game, doPeriodo: Tx[], hoje: string, avaliaFinal: boolean,
 ): { status: StatusGame; progresso: Game['progresso'] } {
   if (g.tipo === 'evitar') {
-    const apareceu = doPeriodo.some((t) => casaAlvo(t, g.alvo));
-    const diasOk = Math.max(0, Math.round(
-      (new Date(hoje + 'T12:00:00Z').getTime() - new Date(g.inicio + 'T12:00:00Z').getTime()) / 86400000,
-    ));
+    // Preenche a cartela dia a dia (Max): cada dia sem o gasto vira quadrado.
+    // Falha no primeiro dia em que o gasto aparecer.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dias: any = { ...(g.progresso?.dias || {}) };
+    const limite = g.fim && hoje > g.fim ? g.fim : hoje;
+    let falhou = false;
+    let d = g.inicio;
+    while (d <= limite) {
+      const doDia = doPeriodo.filter((t) => t.data === d);
+      if (doDia.some((t) => casaAlvo(t, g.alvo))) { falhou = true; break; }
+      dias[d] = true;
+      d = somaDias(d, 1);
+    }
     let status: StatusGame = 'ativo';
-    if (apareceu) status = 'falhou';
+    if (falhou) status = 'falhou';
     else if (avaliaFinal) status = 'completo';
-    return { status, progresso: { ...(g.progresso || {}), dias_ok: diasOk } };
+    return { status, progresso: { ...(g.progresso || {}), dias } };
   }
   // economizar
   const gastoAtual = doPeriodo.filter((t) => casaAlvo(t, g.alvo)).reduce((acc, t) => acc + t.valor, 0);
@@ -210,6 +219,54 @@ export async function avaliarGames(
   }
 
   if (completou) await darBonusNota(userId, supabase);
+}
+
+// Auto-report diario do Premium: marca hoje como mantido (ou falha o game).
+export async function reportarDia(
+  userId: string, supabase: SupabaseClient, gameId: string, manteve: boolean,
+): Promise<Game | null> {
+  const { data } = await supabase
+    .from('games')
+    .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
+    .eq('id', gameId).eq('user_id', userId).eq('status', 'ativo')
+    .maybeSingle();
+  if (!data) return null;
+  const g = data as Game;
+  const hoje = dataSP();
+
+  if (!manteve) {
+    await supabase.from('games').update({ status: 'falhou' }).eq('id', g.id);
+    return { ...g, status: 'falhou' };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dias: any = { ...(g.progresso?.dias || {}) };
+  dias[hoje] = true;
+
+  const totalDias = g.duracao_dias || 0;
+  const marcados = Object.keys(dias).length;
+  const acabou = (g.fim ? hoje >= g.fim : false) || marcados >= totalDias;
+  const status: StatusGame = acabou ? 'completo' : 'ativo';
+
+  await supabase.from('games')
+    .update({ status, progresso: { ...(g.progresso || {}), dias } })
+    .eq('id', g.id);
+
+  if (status === 'completo') await darBonusNota(userId, supabase);
+  return { ...g, status, progresso: { ...(g.progresso || {}), dias } };
+}
+
+// Games ativos que ainda NAO foram reportados hoje (pro pop-up do Premium).
+export async function gamesParaReportar(
+  userId: string, supabase: SupabaseClient,
+): Promise<Game[]> {
+  const { data } = await supabase
+    .from('games')
+    .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
+    .eq('user_id', userId).eq('status', 'ativo');
+  const hoje = dataSP();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((data || []) as Game[]).filter((g) => !((g.progresso as any)?.dias || {})[hoje]);
 }
 
 // ---- sugestoes personalizadas ----
@@ -284,8 +341,10 @@ export async function criarGame(
   const inicio = dataSP();
   const fim = somaDias(inicio, s.duracaoDias);
 
+  // Cartela: mapa de dias mantidos { 'YYYY-MM-DD': true }. Max preenche pelo
+  // banco; Premium pelo auto-report.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let progresso: any = { dias_ok: 0 };
+  let progresso: any = { dias: {} };
 
   // economizar: calcula a "meta" (o quanto gastou no periodo anterior) pra bater.
   if (s.tipo === 'economizar') {
@@ -294,7 +353,7 @@ export async function criarGame(
     const gastoAnterior = txs
       .filter((t) => casaAlvo(t, s.alvo) && (!t.data || t.data >= anteriorInicio))
       .reduce((acc, t) => acc + t.valor, 0);
-    progresso = { meta: Math.round(gastoAnterior * 100) / 100, gasto_atual: 0 };
+    progresso = { dias: {}, meta: Math.round(gastoAnterior * 100) / 100, gasto_atual: 0 };
   }
 
   const { data, error } = await supabase

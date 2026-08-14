@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import {
   sugerirGames, criarGame, listarComProgresso, GAMES_PRONTOS,
+  reportarDia, gamesParaReportar,
   type TipoGame,
 } from '@/lib/games';
 
@@ -50,6 +51,15 @@ export async function POST(request: Request) {
       temConexao = (count || 0) > 0;
     }
 
+    // ===== REPORTAR (auto-report diario do Premium) =====
+    if (acao === 'reportar') {
+      const gameId = String(body?.gameId || '').trim();
+      const manteve = body?.manteve === true;
+      if (!gameId) return NextResponse.json({ erro: 'Game nao informado.' }, { status: 400 });
+      const game = await reportarDia(user.id, supabase, gameId, manteve);
+      return NextResponse.json({ podeJogar: true, game });
+    }
+
     // ===== DESISTIR =====
     if (acao === 'desistir') {
       const gameId = String(body?.gameId || '').trim();
@@ -79,6 +89,8 @@ export async function POST(request: Request) {
     const alvosOcupados = ativos.map((g) => g.alvo);
     const sugestoes = await sugerirGames(user.id, supabase, plano, temConexao, alvosOcupados);
     const prontos = GAMES_PRONTOS.filter((p) => !alvosOcupados.includes(p.alvo));
+    // Premium reporta manualmente; Max preenche sozinho -> so Premium precisa reportar.
+    const reportarHoje = plano === 'max' ? [] : await gamesParaReportar(user.id, supabase);
 
     return NextResponse.json({
       podeJogar: true,
@@ -86,6 +98,7 @@ export async function POST(request: Request) {
       games,
       sugestoes,
       prontos,
+      reportarHoje,
     });
   } catch (erro) {
     console.error('[games] erro:', erro);
