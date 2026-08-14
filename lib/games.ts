@@ -67,14 +67,18 @@ function somaDias(dia: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Uma transacao "casa" com o alvo do game? (padrao por texto, ou categoria)
+// Uma transacao "casa" com o alvo do game? (padrao por texto, categoria, ou
+// texto livre do game personalizado casando pela descricao)
 function casaAlvo(t: Tx, alvo: string): boolean {
   const padrao = PADROES.find((p) => p.alvo === alvo);
   if (padrao) {
     const d = normalizar(t.descricao);
     return padrao.termos.some((termo) => d.includes(termo));
   }
-  return t.categoria === alvo;
+  if (t.categoria === alvo) return true;
+  // alvo livre (game personalizado): casa se a descricao contem o texto.
+  const alvoNorm = normalizar(alvo);
+  return alvoNorm.length >= 3 && normalizar(t.descricao).includes(alvoNorm);
 }
 
 // Le transacoes recentes (Max: banco; senao: ultima fatura PDF).
