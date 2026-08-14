@@ -27,6 +27,7 @@ export type NotaComponentes = {
   consciencia: boolean;
   streakBonus: number;
   dentroDoNormal?: boolean; // so Max
+  bonusGame?: number;       // +pontos por game completado hoje (via lib/games)
 };
 
 export type NotaResultado = {
@@ -160,8 +161,13 @@ export async function registrarNota(
 
   const componentes: NotaComponentes = { presenca, consciencia, streakBonus, dentroDoNormal };
 
+  // Preserva o bonus de game completado hoje (gravado por lib/games).
+  const bonusGame = Number(compAntes.bonusGame || 0);
+  if (bonusGame > 0) componentes.bonusGame = bonusGame;
+
   let nota = PT_PRESENCA + (consciencia ? PT_CONSCIENCIA : 0) + streakBonus;
   if (dentroDoNormal) nota += PT_SINAL;
+  nota += bonusGame;
   nota = Math.min(100, nota);
 
   const frase = gerarFrase(componentes, streak, plano);

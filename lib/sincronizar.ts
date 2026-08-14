@@ -11,6 +11,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getAccounts, getTransactions } from './pluggy';
 import { categorizarLote } from './categorias-banco';
+import { avaliarGames } from './games';
  
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -160,6 +161,14 @@ export async function sincronizarUmaConexao(conexao: Conexao): Promise<Resultado
         erro: null,
       })
       .eq('id', conexao.id);
+
+    // BLOCO 4: com os dados recem-sincronizados, avalia os games do usuario (Max).
+    // Best-effort: se falhar, o sync segue normal.
+    try {
+      await avaliarGames(conexao.user_id, supabase, 'max', true, 'max');
+    } catch (e) {
+      console.error('[sync] falha avaliando games:', e);
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'desconhecido';
     erros.push(`Conexao ${conexao.connector_name || conexao.id}: ${msg}`);

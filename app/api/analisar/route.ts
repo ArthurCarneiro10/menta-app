@@ -6,6 +6,7 @@ import { enviarEmailLimiteSeNecessario } from '@/lib/email-limite';
 import { aplicarRegras } from '@/lib/regras-aprendidas';
 import { enviarPush } from '@/lib/push';
 import { gerarDiagnostico } from '@/lib/diagnostico';
+import { avaliarGames } from '@/lib/games';
 
 // Permite ate 60s de execucao (plano Hobby). A rota faz download + pdf-parse
 // + chamada de IA em sequencia, que pode passar do limite padrao.
@@ -231,6 +232,16 @@ export async function POST(request: Request) {
       corpo: resumoDiag || analise.insight || 'Toque pra ver seus gastos.',
       dados: { rota: '/' },
     }).catch(() => {});
+
+    // 5c. BLOCO 4: avalia os games do Premium contra a fatura recem-analisada.
+    //     (Max avalia pelo banco, no sync; nao aqui.)
+    if (perfil?.plano === 'premium') {
+      try {
+        await avaliarGames(user.id, supabase, 'premium', false, 'fatura');
+      } catch (e) {
+        console.error('[analisar] falha avaliando games:', e);
+      }
+    }
 
     // 6. GASTO FORA DO PADRAO
     try {

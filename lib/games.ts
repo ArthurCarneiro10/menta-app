@@ -124,6 +124,94 @@ function reais(n: number): string {
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// +15 na nota do dia ao completar um game (teto 100).
+const BONUS_GAME = 15;
+
+// Da o bonus de game completo na nota_diaria de hoje (some ao total, teto 100).
+// Guarda em componentes.bonusGame pra o /api/nota preservar no recalculo.
+async function darBonusNota(userId: string, supabase: SupabaseClient): Promise<void> {
+  const hoje = dataSP();
+  const { data: row } = await supabase
+    .from('nota_diaria').select('nota, componentes, streak')
+    .eq('user_id', userId).eq('dia', hoje).maybeSingle();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const comp: any = row?.componentes || {};
+  const bonusAntes = Number(comp.bonusGame || 0);
+  const bonusNovo = bonusAntes + BONUS_GAME;
+  const notaBase = Number(row?.nota || 0) - bonusAntes; // tira o bonus antigo
+  const novaNota = Math.min(100, notaBase + bonusNovo);
+  await supabase.from('nota_diaria').upsert(
+    {
+      user_id: userId, dia: hoje, nota: novaNota,
+      componentes: { ...comp, bonusGame: bonusNovo }, streak: Number(row?.streak || 0),
+    },
+    { onConflict: 'user_id,dia' },
+  );
+}
+
+// Avalia UM game contra as transacoes do periodo. Retorna status + progresso.
+// avaliaFinal = true (Premium/fatura, ou prazo acabou) forca completo/falhou.
+function avaliarUm(
+  g: Game, doPeriodo: Tx[], hoje: string, avaliaFinal: boolean,
+): { status: StatusGame; progresso: Game['progresso'] } {
+  if (g.tipo === 'evitar') {
+    const apareceu = doPeriodo.some((t) => casaAlvo(t, g.alvo));
+    const diasOk = Math.max(0, Math.round(
+      (new Date(hoje + 'T12:00:00Z').getTime() - new Date(g.inicio + 'T12:00:00Z').getTime()) / 86400000,
+    ));
+    let status: StatusGame = 'ativo';
+    if (apareceu) status = 'falhou';
+    else if (avaliaFinal) status = 'completo';
+    return { status, progresso: { ...(g.progresso || {}), dias_ok: diasOk } };
+  }
+  // economizar
+  const gastoAtual = doPeriodo.filter((t) => casaAlvo(t, g.alvo)).reduce((acc, t) => acc + t.valor, 0);
+  const meta = Number(g.progresso?.meta || 0);
+  let status: StatusGame = 'ativo';
+  if (avaliaFinal) status = gastoAtual <= meta ? 'completo' : 'falhou';
+  return { status, progresso: { ...(g.progresso || {}), gasto_atual: Math.round(gastoAtual * 100) / 100, meta } };
+}
+
+// Avalia os games ATIVOS do usuario. contexto:
+//   'max'    -> dia a dia (banco); completa so quando o prazo acaba.
+//   'fatura' -> Premium; avalia contra a fatura recem-analisada (uma checagem).
+export async function avaliarGames(
+  userId: string, supabase: SupabaseClient, plano: string, temConexao: boolean,
+  contexto: 'max' | 'fatura',
+): Promise<void> {
+  const { data } = await supabase
+    .from('games')
+    .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
+    .eq('user_id', userId)
+    .eq('status', 'ativo');
+  const ativos = (data || []) as Game[];
+  if (ativos.length === 0) return;
+
+  const txs = await lerTransacoes(userId, supabase, plano, temConexao);
+  const hoje = dataSP();
+  let completou = false;
+
+  for (const g of ativos) {
+    const doPeriodo = contexto === 'max'
+      ? txs.filter((t) => t.data && t.data >= g.inicio)
+      : txs; // fatura inteira e o periodo pro Premium
+    const acabou = g.fim ? hoje >= g.fim : false;
+    // Premium/fatura: sempre avalia final (uma checagem na fatura nova).
+    const avaliaFinal = contexto === 'fatura' || acabou;
+
+    const r = avaliarUm(g, doPeriodo, hoje, avaliaFinal);
+    const mudouStatus = r.status !== g.status;
+    const mudouProg = JSON.stringify(r.progresso) !== JSON.stringify(g.progresso || {});
+
+    if (mudouStatus || mudouProg) {
+      await supabase.from('games').update({ status: r.status, progresso: r.progresso }).eq('id', g.id);
+    }
+    if (r.status === 'completo') completou = true;
+  }
+
+  if (completou) await darBonusNota(userId, supabase);
+}
+
 // ---- sugestoes personalizadas ----
 export async function sugerirGames(
   userId: string, supabase: SupabaseClient, plano: string, temConexao: boolean,
@@ -181,6 +269,18 @@ export async function criarGame(
   s: { tipo: TipoGame; alvo: string; titulo: string; duracaoDias: number },
   plano: string, temConexao: boolean,
 ): Promise<Game | null> {
+  // Trava anti-duplicata: se ja ha um game ATIVO com o mesmo alvo, nao cria de
+  // novo - devolve o que ja existe.
+  const { data: existente } = await supabase
+    .from('games')
+    .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
+    .eq('user_id', userId)
+    .eq('alvo', s.alvo)
+    .eq('status', 'ativo')
+    .limit(1)
+    .maybeSingle();
+  if (existente) return existente as Game;
+
   const inicio = dataSP();
   const fim = somaDias(inicio, s.duracaoDias);
 
@@ -221,6 +321,12 @@ export async function criarGame(
 export async function listarComProgresso(
   userId: string, supabase: SupabaseClient, plano: string, temConexao: boolean,
 ): Promise<Game[]> {
+  // Max: avalia ao vivo antes de listar (atualiza status/progresso no banco).
+  // Premium: nao avalia aqui - so na fatura (analisar).
+  if (plano === 'max' && temConexao) {
+    await avaliarGames(userId, supabase, plano, temConexao, 'max');
+  }
+
   const { data } = await supabase
     .from('games')
     .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
@@ -228,44 +334,5 @@ export async function listarComProgresso(
     .order('criado_em', { ascending: false })
     .limit(20);
 
-  const games = (data || []) as Game[];
-  const hoje = dataSP();
-
-  // Progresso ao vivo so pro Max (tem dado diario). Premium avalia na fatura.
-  if (plano === 'max' && temConexao) {
-    const txs = await lerTransacoes(userId, supabase, plano, temConexao);
-    for (const g of games) {
-      if (g.status !== 'ativo') continue;
-      const doPeriodo = txs.filter((t) => t.data && t.data >= g.inicio);
-      const acabou = g.fim ? hoje >= g.fim : false;
-
-      if (g.tipo === 'evitar') {
-        const apareceu = doPeriodo.some((t) => casaAlvo(t, g.alvo));
-        const diasOk = Math.max(0, Math.min(
-          g.duracao_dias || 0,
-          Math.round((new Date(hoje + 'T12:00:00Z').getTime() - new Date(g.inicio + 'T12:00:00Z').getTime()) / 86400000),
-        ));
-        let novoStatus: StatusGame = 'ativo';
-        if (apareceu) novoStatus = 'falhou';
-        else if (acabou) novoStatus = 'completo';
-        g.progresso = { ...(g.progresso || {}), dias_ok: diasOk };
-        g.status = novoStatus;
-      } else {
-        // economizar
-        const gastoAtual = doPeriodo.filter((t) => casaAlvo(t, g.alvo)).reduce((acc, t) => acc + t.valor, 0);
-        const meta = Number(g.progresso?.meta || 0);
-        let novoStatus: StatusGame = 'ativo';
-        if (acabou) novoStatus = gastoAtual <= meta ? 'completo' : 'falhou';
-        g.progresso = { ...(g.progresso || {}), gasto_atual: Math.round(gastoAtual * 100) / 100, meta };
-        g.status = novoStatus;
-      }
-
-      // persiste se mudou status ou progresso
-      await supabase.from('games')
-        .update({ status: g.status, progresso: g.progresso })
-        .eq('id', g.id);
-    }
-  }
-
-  return games;
+  return (data || []) as Game[];
 }
