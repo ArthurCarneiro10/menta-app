@@ -16,6 +16,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { adicionarPontos, verificarMarcosStreak, PONTOS } from './gamificacao';
 
 const PT_PRESENCA = 40;
 const PT_CONSCIENCIA = 30;
@@ -176,6 +177,12 @@ export async function registrarNota(
     { user_id: userId, dia: hoje, nota, componentes, streak },
     { onConflict: 'user_id,dia' },
   );
+
+  // Fase 3: na primeira presenca do dia, soma pontos e checa medalhas de streak.
+  if (primeiraVezHoje) {
+    await adicionarPontos(userId, supabase, PONTOS.DIA_STREAK);
+    await verificarMarcosStreak(userId, supabase, streak);
+  }
 
   return { nota, streak, componentes, frase, primeiraVezHoje };
 }

@@ -14,6 +14,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { adicionarPontos, verificarMarcosGames, PONTOS } from './gamificacao';
 
 export type TipoGame = 'evitar' | 'economizar';
 export type StatusGame = 'ativo' | 'completo' | 'falhou' | 'expirado';
@@ -151,6 +152,10 @@ async function darBonusNota(userId: string, supabase: SupabaseClient): Promise<v
     },
     { onConflict: 'user_id,dia' },
   );
+
+  // Fase 3: pontos de constancia + medalhas por completar um game.
+  await adicionarPontos(userId, supabase, PONTOS.GAME_COMPLETO);
+  await verificarMarcosGames(userId, supabase);
 }
 
 // Avalia UM game contra as transacoes do periodo. Retorna status + progresso.
@@ -259,7 +264,6 @@ export async function reportarDia(
   if (status === 'completo') await darBonusNota(userId, supabase);
   return { ...g, status, progresso: { ...(g.progresso || {}), dias } };
 }
-
 // Games ativos que ainda NAO foram reportados hoje (pro pop-up do Premium).
 export async function gamesParaReportar(
   userId: string, supabase: SupabaseClient,
