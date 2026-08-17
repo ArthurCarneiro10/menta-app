@@ -68,6 +68,15 @@ function somaDias(dia: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Segunda-feira da semana atual (YYYY-MM-DD).
+function segundaDaSemana(): string {
+  const d = new Date();
+  const dow = d.getUTCDay(); // 0=dom .. 6=sab
+  const diff = (dow === 0 ? -6 : 1) - dow;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
 // Uma transacao "casa" com o alvo do game? (padrao por texto, categoria, ou
 // texto livre do game personalizado casando pela descricao)
 function casaAlvo(t: Tx, alvo: string): boolean {
@@ -320,6 +329,32 @@ export async function sugerirGames(
   return sugestoes.slice(0, 3);
 }
 
+// ---- desafio da semana (curado, igual pra todos) ----
+const DESAFIOS_TEMPLATE: { tipo: TipoGame; alvo: string; titulo: string }[] = [
+  { tipo: 'evitar', alvo: 'delivery', titulo: 'Semana sem delivery' },
+  { tipo: 'evitar', alvo: 'cafe', titulo: 'Semana sem cafezinho fora' },
+  { tipo: 'economizar', alvo: 'Compras', titulo: 'Gaste menos em Compras esta semana' },
+  { tipo: 'economizar', alvo: 'Lazer', titulo: 'Gaste menos em Lazer esta semana' },
+];
+
+export type DesafioSemanal = { tipo: TipoGame; alvo: string; titulo: string; semana: string; entrou: boolean };
+
+export async function desafioDaSemana(userId: string, supabase: SupabaseClient): Promise<DesafioSemanal> {
+  const semana = segundaDaSemana();
+  const def = await supabase.from('desafios_semanais').select('tipo, alvo, titulo').eq('semana', semana).maybeSingle();
+  let d = def.data as { tipo: TipoGame; alvo: string; titulo: string } | null;
+  if (!d) {
+    const idx = Array.from(semana).reduce((a, c) => a + c.charCodeAt(0), 0) % DESAFIOS_TEMPLATE.length;
+    const t = DESAFIOS_TEMPLATE[idx];
+    await supabase.from('desafios_semanais').insert({ semana, tipo: t.tipo, alvo: t.alvo, titulo: t.titulo }).select();
+    d = t;
+  }
+  const { count } = await supabase.from('games')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId).eq('semanal', true).eq('alvo', d.alvo).gte('inicio', semana);
+  return { ...d, semana, entrou: (count || 0) > 0 };
+}
+
 // ---- lista de prateleira ----
 export const GAMES_PRONTOS: Sugestao[] = [
   { tipo: 'evitar', alvo: 'delivery', titulo: '15 dias sem delivery', motivo: 'Cozinhe mais em casa e sinta a diferenca.', duracaoDias: 15 },
@@ -331,7 +366,7 @@ export const GAMES_PRONTOS: Sugestao[] = [
 // ---- criar ----
 export async function criarGame(
   userId: string, supabase: SupabaseClient,
-  s: { tipo: TipoGame; alvo: string; titulo: string; duracaoDias: number },
+  s: { tipo: TipoGame; alvo: string; titulo: string; duracaoDias: number; semanal?: boolean },
   plano: string, temConexao: boolean,
 ): Promise<Game | null> {
   // Trava anti-duplicata: se ja ha um game ATIVO com o mesmo alvo, nao cria de
@@ -376,6 +411,7 @@ export async function criarGame(
       fim,
       status: 'ativo',
       progresso,
+      semanal: !!s.semanal,
     })
     .select('id, tipo, alvo, titulo, duracao_dias, inicio, fim, status, progresso')
     .single();

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import {
   sugerirGames, criarGame, listarComProgresso, GAMES_PRONTOS,
-  reportarDia, gamesParaReportar,
+  reportarDia, gamesParaReportar, desafioDaSemana,
   type TipoGame,
 } from '@/lib/games';
 
@@ -75,10 +75,11 @@ export async function POST(request: Request) {
       const alvo = String(body?.alvo || '').trim();
       const titulo = String(body?.titulo || '').trim();
       const duracaoDias = Number(body?.duracaoDias) || 15;
+      const semanal = body?.semanal === true;
       if ((tipo !== 'evitar' && tipo !== 'economizar') || !alvo || !titulo) {
         return NextResponse.json({ erro: 'Game invalido.' }, { status: 400 });
       }
-      const game = await criarGame(user.id, supabase, { tipo, alvo, titulo, duracaoDias }, plano, temConexao);
+      const game = await criarGame(user.id, supabase, { tipo, alvo, titulo, duracaoDias, semanal }, plano, temConexao);
       if (!game) return NextResponse.json({ erro: 'Nao foi possivel criar.' }, { status: 500 });
       return NextResponse.json({ podeJogar: true, game });
     }
@@ -91,6 +92,7 @@ export async function POST(request: Request) {
     const prontos = GAMES_PRONTOS.filter((p) => !alvosOcupados.includes(p.alvo));
     // Premium reporta manualmente; Max preenche sozinho -> so Premium precisa reportar.
     const reportarHoje = plano === 'max' ? [] : await gamesParaReportar(user.id, supabase);
+    const desafioSemanal = await desafioDaSemana(user.id, supabase);
 
     return NextResponse.json({
       podeJogar: true,
@@ -99,6 +101,7 @@ export async function POST(request: Request) {
       sugestoes,
       prontos,
       reportarHoje,
+      desafioSemanal,
     });
   } catch (erro) {
     console.error('[games] erro:', erro);
